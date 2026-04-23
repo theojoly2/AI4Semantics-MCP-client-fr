@@ -1,0 +1,14 @@
+sharedservice:
+  client: "OpenAI"
+  init: 
+    base_url: ""
+    api_key: ""
+  model: ""
+
+semic:
+  client: "AzureOpenAI"
+  init:
+    base_url: ""
+    api_key: ""
+    api_version: ""
+  model: ""

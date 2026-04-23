@@ -1,0 +1,3 @@
+MCP-server:
+  local: "http://localhost:8001/mcp"
+  hosted: "https://ai4sem-mcp-server.azurewebsites.net/mcp"

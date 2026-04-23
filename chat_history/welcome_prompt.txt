@@ -1,0 +1,11 @@
+Hello and welcome to our innovative model management platform! 🚀
+
+I’m your AI assistant, currently in the exciting proof-of-concept (POC) phase. 
+Here’s a sneak peek at what we’re working on:
+- **Interactive Querying**: Join me in a dynamic exploration of data standards (SEMIC core vocabularies, LOV, schema.org, ...).
+- **Enterprise Architect and RDF File Upload**: Testing is underway for analyzing XMI files and OWL ontologies in turtle. 
+- **Model Adaptation**: As I evolve, you can upload your data model (owl ontology or UML) and request changes.
+- **Model Visualization**: Witness the early stages of data model interaction.
+- **Model Export**: Attempt to send your modified data model back to Enterprise Architect or as a ttl file.
+  
+Let’s navigate this POC journey together and shape the future of data modeling! 🌱
