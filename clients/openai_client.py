@@ -26,11 +26,14 @@ class OpenAIClient():
         config: dict[str, Any] = configs[API]
         self._config: dict[str, Any] = config
 
+        init = dict(config['init'])
+        init['api_key'] = getenv(init['api_key'])
+
         if config['client'] == 'OpenAI':
-            openai: AsyncOpenAI = AsyncOpenAI(**config['init'])
+            openai: AsyncOpenAI = AsyncOpenAI(**init)
 
         elif config['client'] == 'AzureOpenAI':
-            openai = AsyncAzureOpenAI(**config['init'])
+            openai = AsyncAzureOpenAI(**init)
 
         else:
             raise ValueError('client must be either OpenAI or AzureOpenAI')

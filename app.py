@@ -2,6 +2,10 @@ import os
 from asyncio import run as asyncio_run
 import streamlit as st
 from config import load_config
+from dotenv import load_dotenv
+
+# CRITICAL: charge le .env avant tout import de OpenAIClient
+load_dotenv()
 
 config = load_config()
 

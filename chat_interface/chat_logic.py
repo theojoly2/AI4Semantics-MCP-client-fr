@@ -36,6 +36,7 @@ if not logger.handlers:
     _h.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s"))
     logger.addHandler(_h)
 
+
 # ----------------------------------------------------------------------
 # UI helpers
 # ----------------------------------------------------------------------
@@ -73,6 +74,7 @@ def show_user_error(title: str, details: Optional[str] = None) -> None:
             f"2) Re-launch the UI.\n"
             f"3) If the error keeps happening, contact the tech team at **{CONTACT_EMAIL}**."
         )
+
 
 def with_timeout(coro, seconds: float = 45.0, on_timeout_msg: str = ""):
     """
