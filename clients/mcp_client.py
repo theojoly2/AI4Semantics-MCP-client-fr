@@ -390,7 +390,7 @@ class MCPClient:
         call_args = {
             "search_terms": arguments["search_terms"],
             "vocabularies": arguments.get("vocabularies", []),
-            "number_of_documents": arguments.get("number_of_documents", 10),
+            "limit": arguments.get("limit", 10),
         }
         payload["tool_arguments"] = call_args
 
@@ -548,7 +548,7 @@ class MCPClient:
             "name": self.state.get("name") or "",
             "user_question": arguments["user_question"],
             "allowed_executor_tools": sorted(list(self.EXPOSED_TOOLS)),
-            "observations": arguments.get("observations"),
+            "observations": arguments.get("observations") or [],
             "max_steps": arguments.get("max_steps", 5),
         }
         payload["tool_arguments"] = call_args
