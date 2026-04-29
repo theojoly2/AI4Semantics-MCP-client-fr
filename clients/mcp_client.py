@@ -387,10 +387,21 @@ class MCPClient:
             show_user_error("Missing required argument 'search_terms' for retrieve_documents.")
             return payload
 
+        vocabularies = arguments.get("vocabularies")
+        if not isinstance(vocabularies, list):
+            vocabularies = []
+
+        limit = arguments.get("limit", 10)
+        if isinstance(limit, str):
+            limit = limit.strip()
+            limit = int(limit) if limit else 10
+        elif not isinstance(limit, int):
+            limit = 10
+
         call_args = {
             "search_terms": arguments["search_terms"],
-            "vocabularies": arguments.get("vocabularies", []),
-            "limit": arguments.get("limit", 10),
+            "vocabularies": vocabularies,
+            "limit": limit,
         }
         payload["tool_arguments"] = call_args
 
@@ -614,11 +625,27 @@ class MCPClient:
         assert self.client is not None, "MCP client not initialized"
         arguments = payload.get("tool_arguments", {})
 
+        vocabularies = arguments.get("vocabularies")
+        if not isinstance(vocabularies, list):
+            vocabularies = []
+
+        target_names = arguments.get("target_names")
+        if not isinstance(target_names, list):
+            target_names = None
+
+        n_documents = arguments.get("n_documents", 10)
+        if isinstance(n_documents, str):
+            n_documents = n_documents.strip()
+            n_documents = int(n_documents) if n_documents else 10
+        elif not isinstance(n_documents, int):
+            n_documents = 10
+
         call_args = {
             "user": self.state.get("user"),
             "name": self.state.get("name"),
-            "vocabularies": arguments.get("vocabularies") or [],
-            "n_documents": arguments.get("n_documents", 10),
+            "vocabularies": vocabularies,
+            "n_documents": n_documents,
+            "target_names": target_names,
         }
         payload["tool_arguments"] = call_args
 
@@ -645,7 +672,6 @@ class MCPClient:
             payload["tool_results"] = {}
 
         return payload
-
     async def _validator_check(self, payload: dict[str, Any]) -> dict[str, Any]:
         assert self.client is not None, "MCP client not initialized"
         arguments = payload.get("tool_arguments", {})
