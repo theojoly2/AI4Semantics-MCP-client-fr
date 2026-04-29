@@ -3,12 +3,20 @@ sharedservice:
   init: 
     base_url: ""
     api_key: ""
-  model: ''
+  model: ""
+  completion_params:
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: true
 
 semic:
   client: "AzureOpenAI"
   init:
-    base_url: = ""
+    base_url: ""
     api_key: ""
     api_version: ""
   model: ""
+  completion_params:
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false

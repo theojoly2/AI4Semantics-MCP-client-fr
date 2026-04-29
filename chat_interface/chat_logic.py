@@ -210,6 +210,7 @@ async def process_user_input(user_input: str | None) -> None:
 
         # Completion client for LLM responses
         completions: AsyncCompletions = st.session_state["completions"]
+        completion_params = st.session_state.get("completion_params", {})
 
         # Chat loop: generate a response, call tools, and repeat until no tool call is needed
         loop = True
@@ -223,6 +224,7 @@ async def process_user_input(user_input: str | None) -> None:
                         model=str(environ["LLM_MODEL"]),
                         temperature=0,
                         stream=False,
+                        extra_body=completion_params.get("extra_body"),
                     ),
                     seconds=3000.0,
                     on_timeout_msg="Generating assistant response took too long."

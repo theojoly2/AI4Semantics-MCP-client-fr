@@ -228,6 +228,7 @@ async def sampling_handler(messages, params, context) -> str:
             raise RuntimeError("Missing LLM_MODEL environment variable.")
 
         completions: AsyncCompletions = st.session_state["completions"]
+        completion_params = st.session_state.get("completion_params", {})
 
         resp = await with_timeout(
             completions.create(
@@ -237,6 +238,7 @@ async def sampling_handler(messages, params, context) -> str:
                 max_tokens=getattr(params, "maxTokens", 512) or 512,
                 stop=getattr(params, "stopSequences", None) or None,
                 stream=False,
+                extra_body=completion_params.get("extra_body"),
             ),
             seconds=3000.0,
             on_timeout_msg="The LLM did not respond in time. Please try again.",

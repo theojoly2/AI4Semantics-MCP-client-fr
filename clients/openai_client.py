@@ -26,7 +26,7 @@ class OpenAIClient():
         config: dict[str, Any] = configs[API]
         self._config: dict[str, Any] = config
 
-        init = dict(config['init'])
+        init = (config['init'])
         init['api_key'] = getenv(init['api_key'])
 
         if config['client'] == 'OpenAI':
@@ -39,7 +39,5 @@ class OpenAIClient():
             raise ValueError('client must be either OpenAI or AzureOpenAI')
 
         self._openai: AsyncOpenAI = openai
-        self.chat_completions: AsyncCompletions = self \
-            ._openai \
-            .chat \
-            .completions
+        self.chat_completions: AsyncCompletions = self._openai.chat.completions
+        self.completion_params: dict[str, Any] = dict(config.get("completion_params", {}))
