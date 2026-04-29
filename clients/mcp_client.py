@@ -2,8 +2,10 @@
 from __future__ import annotations
 from time import time
 
+
 """
 Streamlit app with robust error handling for FastMCP + OpenAI async completions.
+
 
 What users will see on error:
 - A clear, actionable message:
@@ -11,8 +13,10 @@ What users will see on error:
   2) Re-launch the UI
   3) If errors persist, contact the tech team at CONTACT_EMAIL
 
+
 Replace CONTACT_EMAIL with your real support address when ready.
 """
+
 
 import asyncio
 import logging
@@ -21,12 +25,14 @@ from json import loads, dumps
 from os import environ
 from typing import Any, Callable, Mapping, Optional, Set
 
+
 import streamlit as st
 from openai import AsyncOpenAI
 from openai.resources.chat.completions import AsyncCompletions
 from openai.types.chat import ChatCompletionToolParam
 from openai.types.shared_params import FunctionDefinition
 from uuid import uuid4
+
 
 from fastmcp import Client
 
@@ -36,6 +42,7 @@ from fastmcp import Client
 # ----------------------------------------------------------------------
 CONTACT_EMAIL = "emilien.caudron@pwc.com"
 LOGGER_NAME = "fastmcp_ui"
+
 
 # ----------------------------------------------------------------------
 # Logging setup
@@ -48,6 +55,62 @@ if not logger.handlers:
     _fmt = logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s")
     _handler.setFormatter(_fmt)
     logger.addHandler(_handler)
+
+
+# ----------------------------------------------------------------------
+# Argument normalization helpers
+# ----------------------------------------------------------------------
+def _normalize_list_arg(value: Any) -> list:
+    """
+    Normalize an argument that should be a list.
+    - If already a list, return as-is.
+    - If a string like "None", "null", "", or whitespace → return [].
+    - Otherwise → return [].
+    """
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned or cleaned.lower() in {"none", "null"}:
+            return []
+    return []
+
+
+def _normalize_str_arg(value: Any, default: str = "") -> str:
+    """
+    Normalize an argument that should be a string.
+    - If a string, strip whitespace. If it's "None", "null", or empty → return default.
+    - If None → return default.
+    - Otherwise, convert to string and strip.
+    """
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned or cleaned.lower() in {"none", "null"}:
+            return default
+        return cleaned
+    if value is None:
+        return default
+    return str(value).strip() or default
+
+
+def _normalize_int_arg(value: Any, default: int = 10) -> int:
+    """
+    Normalize an argument that should be an int.
+    - If already an int, return as-is.
+    - If a string, strip and try to parse. If empty or "None" → return default.
+    - Otherwise → return default.
+    """
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned or cleaned.lower() in {"none", "null"}:
+            return default
+        try:
+            return int(cleaned)
+        except ValueError:
+            return default
+    return default
 
 
 # ----------------------------------------------------------------------
@@ -109,40 +172,20 @@ async def with_timeout(coro, seconds: float = 30.0, *, on_timeout_msg: str = "")
 
 # ----------------------------------------------------------------------
 # Progress bar factory
-#
-# The core insight: st.progress / st.empty widgets are positioned in the
-# Streamlit DOM at the moment they are *created*, not when they are updated.
-# Storing a widget in session_state and reusing it on the next tool call
-# causes it to render at its original (old) position — high up in the chat.
-#
-# Solution: create a fresh st.empty() placeholder right before each tool
-# call, build a one-shot progress handler closure around it, and pass that
-# closure to the FastMCP Client for that call only.  When the call finishes
-# (or errors), clear the placeholder so it disappears cleanly.
 # ----------------------------------------------------------------------
-
 def make_progress_handler():
     """
     Create a fresh progress bar placeholder anchored to the *current* DOM
     position (i.e. just below the latest chat message) and return:
       - the async handler to pass to the FastMCP Client
       - a cleanup callable to call after the tool finishes
-
-    Usage (in MCPClient):
-        progress_handler, clear_progress = make_progress_handler()
-        client = Client(..., progress_handler=progress_handler)
-        ...
-        clear_progress()
     """
-    # st.empty() is created right now, at the current render position.
-    # Each call to make_progress_handler() produces a *new* placeholder.
     placeholder = st.empty()
 
     async def _handler(progress: float, total: float | None, message: str | None) -> None:
         if total and total > 0:
             pct = (progress / total) * 100
             if pct >= 100:
-                # Done — wipe the placeholder immediately.
                 placeholder.empty()
             else:
                 placeholder.progress(
@@ -150,7 +193,6 @@ def make_progress_handler():
                     text=f"Progress: {pct:.1f}%  {message or ''}".strip(),
                 )
         else:
-            # Indeterminate: just show the raw counter.
             placeholder.progress(0, text=f"Step {int(progress)}…  {message or ''}".strip())
 
         logger.debug("Progress: %s / %s — %s", progress, total, message)
@@ -164,7 +206,6 @@ def make_progress_handler():
 # ----------------------------------------------------------------------
 # Sampling handler (server -> client LLM request)
 # ----------------------------------------------------------------------
-
 async def sampling_handler(messages, params, context) -> str:
     """
     Bridges MCP sampling -> OpenAI Chat Completions.
@@ -218,12 +259,6 @@ async def sampling_handler(messages, params, context) -> str:
 class MCPClient:
     """
     Prefect FastMCP-compatible client wrapper.
-
-    Key change vs. the original: the FastMCP Client is now instantiated
-    fresh for each tool call (inside _call_with_progress) so that its
-    progress_handler is bound to a placeholder created at the *current*
-    DOM position, ensuring the progress bar always appears below the
-    latest chat message.
     """
 
     EXPOSED_TOOLS: Set[str] = {
@@ -250,15 +285,12 @@ class MCPClient:
         self.state = state
         self.server = server
         self.exit_stack = AsyncExitStack()
-        # self.client is used for non-progress calls (tools(), read_model, etc.)
         self.client: Client | None = None
         self.tool_results: dict[str, Any] = {}
 
     async def __aenter__(self) -> "MCPClient":
         try:
             if self.client is None:
-                # The base client uses no progress handler; progress is injected
-                # per-call via _call_with_progress below.
                 self.client = Client(
                     self.server,
                     sampling_handler=sampling_handler,
@@ -290,14 +322,9 @@ class MCPClient:
         Create a fresh progress bar placeholder at the current DOM position,
         open a short-lived FastMCP Client session with that handler, execute
         the tool call, then clean up the placeholder.
-
-        This guarantees the progress bar always appears directly below the
-        latest chat message, regardless of how many tool calls have been made.
         """
         progress_handler, clear_progress = make_progress_handler()
 
-        # Open a *new* Client session with the freshly created progress handler.
-        # This is inexpensive — FastMCP sessions are lightweight HTTP connections.
         progress_client = Client(
             self.server,
             sampling_handler=sampling_handler,
@@ -312,7 +339,6 @@ class MCPClient:
                 )
             return result
         finally:
-            # Always clear the placeholder, even if the call raised.
             clear_progress()
 
     # ------------------------------------------------------------------
@@ -376,7 +402,7 @@ class MCPClient:
         return dumps(payload)
 
     # ------------------------------------------------------------------
-    # Tool wrappers — all now delegate the actual call to _call_with_progress
+    # Tool wrappers
     # ------------------------------------------------------------------
 
     async def _retrieve_documents(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -387,21 +413,10 @@ class MCPClient:
             show_user_error("Missing required argument 'search_terms' for retrieve_documents.")
             return payload
 
-        vocabularies = arguments.get("vocabularies")
-        if not isinstance(vocabularies, list):
-            vocabularies = []
-
-        limit = arguments.get("limit", 10)
-        if isinstance(limit, str):
-            limit = limit.strip()
-            limit = int(limit) if limit else 10
-        elif not isinstance(limit, int):
-            limit = 10
-
         call_args = {
             "search_terms": arguments["search_terms"],
-            "vocabularies": vocabularies,
-            "limit": limit,
+            "vocabularies": _normalize_list_arg(arguments.get("vocabularies")),
+            "limit": _normalize_int_arg(arguments.get("limit"), default=10),
         }
         payload["tool_arguments"] = call_args
 
@@ -560,7 +575,7 @@ class MCPClient:
             "user_question": arguments["user_question"],
             "allowed_executor_tools": sorted(list(self.EXPOSED_TOOLS)),
             "observations": arguments.get("observations") or [],
-            "max_steps": arguments.get("max_steps", 5),
+            "max_steps": arguments.get("max_steps", 10),
         }
         payload["tool_arguments"] = call_args
 
@@ -590,8 +605,8 @@ class MCPClient:
         call_args = {
             "user": self.state.get("user"),
             "name": self.state.get("name"),
-            "target_names": arguments.get("target_names") or [],
-            "check_instruction": arguments.get("check_instruction") or "",
+            "target_names": _normalize_list_arg(arguments.get("target_names")),
+            "check_instruction": _normalize_str_arg(arguments.get("check_instruction"), default=""),
         }
         payload["tool_arguments"] = call_args
 
@@ -625,27 +640,14 @@ class MCPClient:
         assert self.client is not None, "MCP client not initialized"
         arguments = payload.get("tool_arguments", {})
 
-        vocabularies = arguments.get("vocabularies")
-        if not isinstance(vocabularies, list):
-            vocabularies = []
-
-        target_names = arguments.get("target_names")
-        if not isinstance(target_names, list):
-            target_names = None
-
-        n_documents = arguments.get("n_documents", 10)
-        if isinstance(n_documents, str):
-            n_documents = n_documents.strip()
-            n_documents = int(n_documents) if n_documents else 10
-        elif not isinstance(n_documents, int):
-            n_documents = 10
+        target_names = _normalize_list_arg(arguments.get("target_names"))
 
         call_args = {
             "user": self.state.get("user"),
             "name": self.state.get("name"),
-            "vocabularies": vocabularies,
-            "n_documents": n_documents,
-            "target_names": target_names,
+            "vocabularies": _normalize_list_arg(arguments.get("vocabularies")),
+            "n_documents": _normalize_int_arg(arguments.get("n_documents"), default=10),
+            "target_names": target_names if target_names else None,
         }
         payload["tool_arguments"] = call_args
 
@@ -672,6 +674,7 @@ class MCPClient:
             payload["tool_results"] = {}
 
         return payload
+
     async def _validator_check(self, payload: dict[str, Any]) -> dict[str, Any]:
         assert self.client is not None, "MCP client not initialized"
         arguments = payload.get("tool_arguments", {})
