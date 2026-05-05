@@ -79,7 +79,7 @@ async def with_timeout(coro, seconds: float = 60.0, on_timeout_msg: str = ""):
 # ----------------------------------------------------------------------
 # File type detection
 # ----------------------------------------------------------------------
-def _detect_file_type(first_bytes: bytes) -> Optional[Literal["xml", "ttl"]]:
+def _detect_file_type(first_bytes: bytes) -> Optional[Literal["xml", "ttl", "xmi"]]:
     """
     Heuristically detect file type from initial bytes.
     """

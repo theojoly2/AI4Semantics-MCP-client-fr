@@ -212,7 +212,7 @@ async def data_modelling_chat_tab(server:str) -> None:
                     # File uploader for XML/TTL model files
                     st.session_state["file"] = st.file_uploader(
                         "Upload an XML/TTL document",
-                        type=["xml", "ttl"],
+                        type=["xml", "ttl", "xmi"],
                         accept_multiple_files=False,
                         help="Upload your data model as an XML export from EA or a TTL file",
                     )
