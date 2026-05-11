@@ -4,38 +4,64 @@ import streamlit as st
 from config import load_config
 from dotenv import load_dotenv
 
-# CRITICAL: charge le .env avant tout import de OpenAIClient
 load_dotenv()
 
 config = load_config()
-
 SERVER = config["MCP-server"]["local"]
 
-from chat_interface import data_modelling_chat_tab  # keep your original import style
+from chat_interface import data_modelling_chat_tab
 
-# One-time secrets → env hydration (guarded)
 try:
-    st.session_state.setdefault('add_env', True)
-    if st.session_state['add_env']:
-        st.session_state['add_env'] = False
-        os.environ.update(st.secrets)  # if st.secrets present, update env
+    st.session_state.setdefault("add_env", True)
+    if st.session_state["add_env"]:
+        st.session_state["add_env"] = False
+        os.environ.update(st.secrets)
 except Exception as e:
-    # Non-fatal; app can continue
     st.warning(f"Could not apply secrets to environment: {e}")
 
-# Set layout
-st.set_page_config(layout="wide")
+st.set_page_config(
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# Tabs
+st.markdown("""
+<style>
+/* Réduit fortement l'espace vide en haut */
+div[data-testid="stMainBlockContainer"] {
+    padding-top: 0.5rem !important;
+    padding-bottom: 0rem !important;
+}
+
+/* Fallback pour certaines versions */
+.block-container {
+    padding-top: 0.5rem !important;
+    padding-bottom: 0rem !important;
+}
+
+/* Rend le header transparent et plus discret */
+header.stAppHeader {
+    background-color: transparent;
+}
+
+/* Supprime la ligne décorative rouge du haut si elle gêne */
+div[data-testid="stDecoration"] {
+    display: none;
+}
+
+/* Optionnel : réduit aussi le haut de la sidebar */
+[data-testid="stSidebarHeader"] {
+    height: 2rem;
+}
+</style>
+""", unsafe_allow_html=True)
+
 tab1, *_ = st.tabs(["Data Model chat"])
 
 with tab1:
     try:
         asyncio_run(data_modelling_chat_tab(server=SERVER))
     except Exception as e:
-        # Ensure user-friendly error at top-level
         try:
-            # Preferred UX if supported
             with st.status("The UI encountered an unexpected error.", expanded=True, state="error") as status:
                 st.write(str(e))
                 st.write(
