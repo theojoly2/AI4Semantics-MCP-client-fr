@@ -46,8 +46,8 @@ def render_persistent_error_banner() -> None:
         st.markdown(
             f"""
 **What you can do now:**
-1) Review your inputs and correct the bug if possible.  
-2) Re-launch the UI.  
+1) Review your inputs and correct the bug if possible.
+2) Re-launch the UI.
 3) If the error keeps happening, contact the tech team at **{contact_email}**.
             """
         )
@@ -460,6 +460,7 @@ async def _render_model_panel() -> None:
                 "A critical error occurred while downloading or visualising the model.",
                 details=str(e),
             )
+
 
 def _render_page_bottom_guard(height_px: int = 56) -> None:
     st.markdown(
