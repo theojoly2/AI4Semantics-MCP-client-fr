@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-# Standard library imports
 from typing import Any, Optional
 from io import BytesIO
 import asyncio
 import logging
 from os import environ
 
-# Third-party imports
 import streamlit as st
 
 # Local application imports
@@ -198,7 +196,6 @@ def _inject_layout_css() -> None:
                 margin-top: -1.5rem;
             }
 
-            /* Bouton de toggle grisé pendant la génération */
             button[data-generating="true"] {
                 opacity: 0.5 !important;
                 cursor: not-allowed !important;
@@ -225,7 +222,8 @@ def _init_state(server: str) -> ChatHistory:
     st.session_state.setdefault("visualise", True)
     st.session_state.setdefault("panel_collapsed", False)
     st.session_state.setdefault("model", {})
-    st.session_state.setdefault("_generating", False)  # ← flag de génération
+    st.session_state.setdefault("_generating", False)
+    st.session_state.setdefault("_pending_input", None)
 
     if "history" not in st.session_state:
         st.session_state["history"] = ChatHistory()
@@ -253,8 +251,14 @@ def _render_connection_sidebar(chat_history: ChatHistory) -> None:
                 "Enter User",
                 key="sidebar_user_value",
                 placeholder="Votre identifiant",
+                disabled=is_generating,
             )
-            if st.button("Set User", key="sidebar_set_user", use_container_width=True):
+            if st.button(
+                "Set User",
+                key="sidebar_set_user",
+                use_container_width=True,
+                disabled=is_generating,
+            ):
                 user_value = user_value.strip()
                 if not user_value:
                     show_user_error("Please enter a user before continuing.")
@@ -271,8 +275,14 @@ def _render_connection_sidebar(chat_history: ChatHistory) -> None:
                     "Enter Session",
                     key="sidebar_session_value",
                     placeholder="Nom de session",
+                    disabled=is_generating,
                 )
-                if st.button("Set Session", key="sidebar_set_session", use_container_width=True):
+                if st.button(
+                    "Set Session",
+                    key="sidebar_set_session",
+                    use_container_width=True,
+                    disabled=is_generating,
+                ):
                     session_value = session_value.strip()
                     if not session_value:
                         show_user_error("Please enter a session name before continuing.")
@@ -295,8 +305,14 @@ def _render_connection_sidebar(chat_history: ChatHistory) -> None:
                     "Session to load",
                     key="sidebar_reload_session",
                     placeholder="Session existante",
+                    disabled=is_generating,
                 )
-                if st.button("Load Session", key="sidebar_load_session", use_container_width=True):
+                if st.button(
+                    "Load Session",
+                    key="sidebar_load_session",
+                    use_container_width=True,
+                    disabled=is_generating,
+                ):
                     reload_session = reload_session.strip()
                     if not reload_session:
                         show_user_error("Please enter a session name to load.")
@@ -319,7 +335,6 @@ def _render_connection_sidebar(chat_history: ChatHistory) -> None:
             if not st.session_state.get("panel_collapsed", False)
             else "Afficher le canvas"
         )
-        # Bouton désactivé + label différent pendant la génération
         if st.button(
             "⏳ Génération en cours..." if is_generating else toggle_label,
             key="sidebar_toggle_visualisation",
@@ -362,7 +377,6 @@ async def _render_model_panel() -> None:
     if st.session_state.get("panel_collapsed", False):
         st.markdown("<div class='collapsed-canvas-wrap'>", unsafe_allow_html=True)
         st.markdown("<div class='collapsed-canvas-button'>", unsafe_allow_html=True)
-        # Bouton désactivé + tooltip pendant la génération
         if st.button(
             "⏳" if is_generating else "▶",
             key="inline_toggle_canvas_collapsed",
@@ -383,7 +397,6 @@ async def _render_model_panel() -> None:
     with toolbar_left:
         st.subheader("Visualisation du modèle")
     with toolbar_right:
-        # Bouton désactivé + tooltip pendant la génération
         if st.button(
             "⏳" if is_generating else "◀",
             key="inline_toggle_canvas_expanded",
@@ -407,6 +420,7 @@ async def _render_model_panel() -> None:
             accept_multiple_files=False,
             help="Upload your data model as an XML export from EA or a TTL file",
             key="model_file_uploader",
+            disabled=is_generating,
         )
 
         if uploaded_file is not None:
@@ -425,18 +439,20 @@ async def _render_model_panel() -> None:
                 )
     else:
         try:
-            download_xml(model)
+            if not is_generating:
+                download_xml(model)
+            else:
+                st.button(
+                    "⏳ Téléchargement indisponible",
+                    disabled=True,
+                    help="Génération en cours, veuillez patienter...",
+                    key="download_disabled_placeholder",
+                )
 
-            st.session_state["visualise"] = st.checkbox(
-                "Visualise Model",
-                value=st.session_state.get("visualise", True),
-                key="visualise_checkbox",
-            )
-            if st.session_state.get("visualise", False):
-                if "xmi" in model:
-                    visualise(model["xmi"])
-                else:
-                    visualise(model)
+            if "xmi" in model:
+                visualise(model["xmi"])
+            else:
+                visualise(model)
 
         except Exception as e:
             logger.exception("Downloading/visualising model failed: %s", e)
@@ -444,14 +460,6 @@ async def _render_model_panel() -> None:
                 "A critical error occurred while downloading or visualising the model.",
                 details=str(e),
             )
-
-
-def _render_chat_bottom_guard(height_px: int = 110) -> None:
-    st.markdown(
-        f"<div style='height: {height_px}px; width: 100%;'></div>",
-        unsafe_allow_html=True,
-    )
-
 
 def _render_page_bottom_guard(height_px: int = 56) -> None:
     st.markdown(
@@ -463,20 +471,15 @@ def _render_page_bottom_guard(height_px: int = 56) -> None:
 async def _render_chat_panel(user_input: Optional[str] = None) -> None:
     st.markdown("<div class='chat-scroll-anchor'></div>", unsafe_allow_html=True)
 
-    with st.container(height=580, border=False):
+    with st.container(height=540, border=False):
         set_chatbox_layout()
 
         if user_input:
             try:
-                # ← Marquer début de génération
-                st.session_state["_generating"] = True
                 await process_user_input(user_input)
             finally:
-                # ← Toujours libérer le flag, même en cas d'erreur
                 st.session_state["_generating"] = False
             st.rerun()
-
-        _render_chat_bottom_guard(110)
 
 
 # ----------------------------------------------------------------------
@@ -524,19 +527,21 @@ async def data_modelling_chat_tab(server: str) -> None:
         with col_chat:
             chat_container = st.container()
 
+        is_generating = st.session_state.get("_generating", False)
+
         input_left, input_center, input_right = st.columns([1, 6, 1])
 
         with input_center:
             user_input = st.chat_input(
-                "Your message",
+                "⏳ Génération en cours..." if is_generating else "Your message",
                 key="xmi_chat_input",
                 width="stretch",
+                disabled=is_generating,
             )
 
         _render_page_bottom_guard(66)
 
-                # 1. Marquer la génération AVANT le rerun pour que l'UI se mette à jour
-        if user_input and not st.session_state.get("_generating", False):
+        if user_input and not is_generating:
             st.session_state["_generating"] = True
             st.session_state["_pending_input"] = user_input
             st.rerun()
