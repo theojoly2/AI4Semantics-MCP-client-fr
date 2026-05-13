@@ -437,29 +437,28 @@ async def _render_model_panel() -> None:
                     "A critical error occurred while uploading the file.",
                     details=str(e),
                 )
-    else:
-        try:
-            if not is_generating:
-                download_xml(model)
-            else:
-                st.button(
-                    "⏳ Téléchargement indisponible",
-                    disabled=True,
-                    help="Génération en cours, veuillez patienter...",
-                    key="download_disabled_placeholder",
-                )
+        return
 
-            if "xmi" in model:
-                visualise(model["xmi"])
-            else:
-                visualise(model)
+    try:
+        download_xml(model, disabled=is_generating)
+    except Exception as e:
+        logger.exception("Rendering export buttons failed: %s", e)
+        show_user_error(
+            "A critical error occurred while preparing model exports.",
+            details=str(e),
+        )
 
-        except Exception as e:
-            logger.exception("Downloading/visualising model failed: %s", e)
-            show_user_error(
-                "A critical error occurred while downloading or visualising the model.",
-                details=str(e),
-            )
+    try:
+        if "xmi" in model:
+            visualise(model["xmi"])
+        else:
+            visualise(model)
+    except Exception as e:
+        logger.exception("Visualising model failed: %s", e)
+        show_user_error(
+            "A critical error occurred while visualising the model.",
+            details=str(e),
+        )
 
 
 def _render_page_bottom_guard(height_px: int = 56) -> None:

@@ -530,17 +530,27 @@ class MCPClient:
             return payload
 
         call_args = {
-            "user": self.state.get("user"),
-            "name": self.state.get("name"),
-            "source_name": arguments["source_name"],
-            "target_name": arguments["target_name"],
-            "rel_label": arguments["rel_label"],
-            "rel_definition": arguments["rel_definition"],
-            "rel_uri": arguments["rel_uri"] or f"http://example.com/{arguments['rel_label']}",
-            "relationship": arguments["relationship"],
-            "rb": arguments.get("rb"),
-            "rt": arguments.get("rt"),
-            "rel_usage_note": arguments.get("rel_usage_note", ""),
+            "user": _normalize_str_arg(self.state.get("user"), default=""),
+            "name": _normalize_str_arg(self.state.get("name"), default=""),
+            "source_name": _normalize_str_arg(arguments.get("source_name"), default=""),
+            "target_name": _normalize_str_arg(arguments.get("target_name"), default=""),
+            "rel_label": _normalize_str_arg(arguments.get("rel_label"), default=""),
+            "rel_definition": _normalize_str_arg(arguments.get("rel_definition"), default=""),
+            "rel_uri": _normalize_str_arg(
+                arguments.get("rel_uri"),
+                default=f"http://example.com/{_normalize_str_arg(arguments.get('rel_label'), default='relation')}",
+            ),
+            "relationship": _normalize_str_arg(arguments.get("relationship"), default="Association"),
+
+            # cardinalités
+            "lb": _normalize_str_arg(arguments.get("lb"), default=""),
+            "rb": _normalize_str_arg(arguments.get("rb"), default=""),
+
+            # rôles
+            "lt": _normalize_str_arg(arguments.get("lt"), default=""),
+            "rt": _normalize_str_arg(arguments.get("rt"), default=""),
+
+            "rel_usage_note": _normalize_str_arg(arguments.get("rel_usage_note"), default=""),
         }
         payload["tool_arguments"] = call_args
 

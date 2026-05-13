@@ -1,8 +1,8 @@
-
 from __future__ import annotations
 
 # Standard library imports
 from typing import Any, Optional, Literal
+from pathlib import Path
 from io import BytesIO
 import asyncio
 import logging
@@ -18,10 +18,11 @@ from .export_xml import json_to_xml
 from .visualisation import get_image_bytes
 from .export_ttl import jsonld_to_ttl_bytes
 
+
 # ----------------------------------------------------------------------
 # Config & logging
 # ----------------------------------------------------------------------
-CONTACT_EMAIL = "emilien.caudron@pwc.com"  # Dummy email per your request
+CONTACT_EMAIL = "emilien.caudron@pwc.com"
 LOGGER_NAME = "model_utils"
 logger = logging.getLogger(LOGGER_NAME)
 logger.setLevel(logging.INFO)
@@ -79,19 +80,103 @@ async def with_timeout(coro, seconds: float = 60.0, on_timeout_msg: str = ""):
 # ----------------------------------------------------------------------
 # File type detection
 # ----------------------------------------------------------------------
-def _detect_file_type(first_bytes: bytes) -> Optional[Literal["xml", "ttl", "xmi"]]:
+def _detect_file_type(
+    first_bytes: bytes,
+    filename: Optional[str] = None,
+) -> Optional[Literal["xml", "ttl", "xmi"]]:
     """
-    Heuristically detect file type from initial bytes.
+    Detect file type from filename first, then from content.
     """
-    sniff = first_bytes[:256].lstrip()
-    # XML/XMI often starts with '<' or '<?xml'
+    if filename:
+        suffix = Path(filename).suffix.lower()
+        if suffix == ".ttl":
+            return "ttl"
+        if suffix == ".xmi":
+            return "xmi"
+        if suffix == ".xml":
+            return "xml"
+
+    sniff = first_bytes[:512].lstrip()
+
     if sniff.startswith(b"<") or sniff.startswith(b"<?xml"):
         return "xml"
-    # Turtle hints
-    turtle_markers = (b"@prefix", b"@base", b"PREFIX ", b"BASE ", b"@prefix ")
-    if any(m in sniff for m in turtle_markers):
+
+    turtle_markers = (
+        b"@prefix",
+        b"@base",
+        b"PREFIX ",
+        b"BASE ",
+        b"prefix ",
+        b"base ",
+    )
+    if any(marker in sniff for marker in turtle_markers):
         return "ttl"
+
     return None
+
+
+# ----------------------------------------------------------------------
+# Export helpers
+# ----------------------------------------------------------------------
+def _get_model_name(default: str = "export") -> str:
+    value = (st.session_state.get("name") or default).strip()
+    return value or default
+
+
+def _build_ttl_bytes(json_data: dict[str, Any]) -> bytes:
+    """
+    Build TTL bytes from a model if possible.
+    Preference:
+    1) ttl_raw
+    2) ttl as JSON-LD transformed via jsonld_to_ttl_bytes
+    """
+    ttl_raw = json_data.get("ttl_raw")
+
+    if isinstance(ttl_raw, bytes) and ttl_raw:
+        return ttl_raw
+
+    if isinstance(ttl_raw, str) and ttl_raw.strip():
+        return ttl_raw.encode("utf-8")
+
+    ttl_json = json_data.get("ttl")
+    if ttl_json:
+        ttl_bytes = jsonld_to_ttl_bytes(ttl_json)
+        if isinstance(ttl_bytes, str):
+            ttl_bytes = ttl_bytes.encode("utf-8")
+        return ttl_bytes or b""
+
+    logger.warning(
+        "TTL export unavailable: missing ttl_raw and ttl. Available keys=%s",
+        list(json_data.keys()),
+    )
+    return b""
+
+
+def _build_xmi_bytes(json_data: dict[str, Any]) -> bytes:
+    """
+    Build XMI/XML bytes from a model if possible.
+    Preference:
+    1) json_data['xmi']
+    2) json_data itself if it already looks like an XMI-like JSON model
+    """
+    if isinstance(json_data.get("xmi"), dict):
+        export_source = json_data["xmi"]
+    elif "elements" in json_data or "connectors" in json_data:
+        export_source = {
+            "elements": json_data.get("elements", []),
+            "connectors": json_data.get("connectors", []),
+        }
+    else:
+        logger.warning(
+            "XMI export unavailable: missing xmi/elements/connectors. Available keys=%s",
+            list(json_data.keys()),
+        )
+        return b""
+
+    bytes_data = json_to_xml(export_source)
+    if isinstance(bytes_data, str):
+        bytes_data = bytes_data.encode("utf-8")
+    return bytes_data or b""
 
 
 # ----------------------------------------------------------------------
@@ -99,42 +184,40 @@ def _detect_file_type(first_bytes: bytes) -> Optional[Literal["xml", "ttl", "xmi
 # ----------------------------------------------------------------------
 async def upload_xml(uploaded_file: BytesIO) -> dict[str, Any]:
     """
-    Imports an XML or TTL file uploaded by the user and converts it to a JSON-compatible dictionary.
-    If XML/XMI, adds a 'Generated' package for further modifications, and uploads to the MCP server.
+    Imports an XML/XMI or TTL file uploaded by the user and converts it to
+    a JSON-compatible dictionary.
 
-    Args:
-        uploaded_file: The uploaded XML or TTL file (as a BytesIO-like object).
-    Returns:
-        The server-confirmed model (dict), or {} on error.
+    If XML/XMI, adds a 'Generated' package for further modifications, and uploads
+    to the MCP server.
+
+    If TTL, preserves ttl_raw so that TTL export remains available later.
     """
     try:
-        # Ensure MCP client is available
         if "mcp_client" not in st.session_state or st.session_state["mcp_client"] is None:
             show_user_error("MCP client is not initialized in session.")
             return {}
 
         mcp_client: MCPClient = st.session_state["mcp_client"]
 
-        # Read bytes & reset pointer
         file_bytes = uploaded_file.read()
         uploaded_file.seek(0)
 
-        # Detect type
-        kind = _detect_file_type(file_bytes)
+        filename = getattr(uploaded_file, "name", None)
+        kind = _detect_file_type(file_bytes, filename)
         if kind is None:
-            show_user_error("Unsupported file format.",
-                            "Please upload an XMI/XML or TTL file.")
+            show_user_error(
+                "Unsupported file format.",
+                "Please upload an XMI/XML or TTL file."
+            )
             return {}
 
-        # Parse based on type
-        if kind == "xml":
+        if kind in {"xml", "xmi"}:
             try:
                 json_data = xml_to_json(BytesIO(file_bytes))
             except Exception as e:
                 show_user_error("Failed to parse the XML/XMI file.", details=str(e))
                 return {}
 
-            # Add a Generated package to allow further edits in UI
             try:
                 elements = json_data.get("elements", [])
                 if not elements:
@@ -160,6 +243,8 @@ async def upload_xml(uploaded_file: BytesIO) -> dict[str, Any]:
                 show_user_error("Could not append the 'Generated' package.", details=str(e))
                 return {}
 
+            json_data["source_format"] = "xmi"
+
         else:  # kind == "ttl"
             try:
                 json_data = ttl_to_json(BytesIO(file_bytes))
@@ -167,7 +252,9 @@ async def upload_xml(uploaded_file: BytesIO) -> dict[str, Any]:
                 show_user_error("Failed to parse the TTL file.", details=str(e))
                 return {}
 
-        # Upload the model to the MCP server
+            json_data["source_format"] = "ttl"
+            json_data["ttl_raw"] = file_bytes.decode("utf-8", errors="replace")
+
         try:
             async with mcp_client:
                 model = await with_timeout(
@@ -181,7 +268,21 @@ async def upload_xml(uploaded_file: BytesIO) -> dict[str, Any]:
             show_user_error("Uploading the model to the server failed.", details=str(e))
             return {}
 
-        return model or {}
+        model = model or {}
+
+        # Reinject source info if the server did not preserve it
+        if kind == "ttl":
+            model.setdefault("source_format", "ttl")
+            model.setdefault("ttl_raw", json_data.get("ttl_raw", ""))
+
+            if json_data.get("ttl") and not model.get("ttl"):
+                model["ttl"] = json_data["ttl"]
+
+        else:
+            model.setdefault("source_format", "xmi")
+
+        st.session_state["model"] = model
+        return model
 
     except Exception as e:
         logger.exception("upload_xml failed: %s", e)
@@ -189,37 +290,96 @@ async def upload_xml(uploaded_file: BytesIO) -> dict[str, Any]:
         return {}
 
 
-def download_xml(json_data: dict[str, Any]) -> None:
+# ----------------------------------------------------------------------
+# Download buttons
+# ----------------------------------------------------------------------
+def download_xml(json_data: dict[str, Any], disabled: bool = False) -> None:
     """
-    Converts a JSON model to XML and provides a download button in the Streamlit UI.
+    Render two independent download buttons:
+    - Exporter en TTL
+    - Exporter en XMI
+
+    A failure in one export must not prevent the other from rendering.
     """
+    model_name = _get_model_name("export")
+
+    ttl_bytes = b""
+    xmi_bytes = b""
+    ttl_error: Optional[str] = None
+    xmi_error: Optional[str] = None
+
     try:
-        if "elements" in json_data.keys():
-            bytes_data = json_to_xml(json_data)  # expected to return bytes or str
-            if isinstance(bytes_data, str):
-                bytes_data = bytes_data.encode("utf-8")
-
-            st.download_button(
-                label="Download model",
-                data=bytes_data or b"",
-                file_name="export.xml",
-                mime="application/xml",
-            )
-        elif "ttl" in json_data.keys():
-            ttl_content = jsonld_to_ttl_bytes(json_data.get("ttl", ""))
-
-            st.download_button(
-                label="Download model",
-                data=ttl_content or b"",
-                file_name="export.ttl",
-                mime="text/turtle",
-            )
-        else: 
-            raise show_user_error("No downloadable model found in the provided data.")
+        ttl_bytes = _build_ttl_bytes(json_data)
     except Exception as e:
-        show_user_error("Failed to generate download for XML.", details=str(e))
+        logger.exception("TTL export preparation failed: %s", e)
+        ttl_error = str(e)
+
+    try:
+        xmi_bytes = _build_xmi_bytes(json_data)
+    except Exception as e:
+        logger.exception("XMI export preparation failed: %s", e)
+        xmi_error = str(e)
+
+    col_ttl, col_xmi = st.columns(2, gap="small")
+
+    with col_ttl:
+        if disabled:
+            st.button(
+                "⏳ Export TTL indisponible",
+                disabled=True,
+                use_container_width=True,
+                key="download_ttl_disabled_generating",
+            )
+        elif ttl_bytes:
+            st.download_button(
+                label="Exporter en TTL",
+                data=ttl_bytes,
+                file_name=f"{model_name}.ttl",
+                mime="text/turtle",
+                use_container_width=True,
+                key="download_ttl_button",
+            )
+        else:
+            st.button(
+                "Export TTL indisponible",
+                disabled=True,
+                use_container_width=True,
+                key="download_ttl_disabled_empty",
+            )
+            if ttl_error:
+                st.caption(f"Erreur TTL : {ttl_error}")
+
+    with col_xmi:
+        if disabled:
+            st.button(
+                "⏳ Export XMI indisponible",
+                disabled=True,
+                use_container_width=True,
+                key="download_xmi_disabled_generating",
+            )
+        elif xmi_bytes:
+            st.download_button(
+                label="Exporter en XMI",
+                data=xmi_bytes,
+                file_name=f"{model_name}.xmi",
+                mime="application/xml",
+                use_container_width=True,
+                key="download_xmi_button",
+            )
+        else:
+            st.button(
+                "Export XMI indisponible",
+                disabled=True,
+                use_container_width=True,
+                key="download_xmi_disabled_empty",
+            )
+            if xmi_error:
+                st.caption(f"Erreur XMI : {xmi_error}")
 
 
+# ----------------------------------------------------------------------
+# Visualisation
+# ----------------------------------------------------------------------
 def visualise(json_data: dict[str, Any]) -> None:
     """
     Visualizes a JSON model as an image in the Streamlit UI.
