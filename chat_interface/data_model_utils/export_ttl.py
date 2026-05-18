@@ -1,23 +1,27 @@
-
 import json
 from typing import Any
 from rdflib import Graph
 
+
 def jsonld_to_ttl_bytes(jsonld_obj: Any) -> bytes:
     """
-    Parse a JSON-LD object into an RDF graph and serialize to RDF/XML bytes.
+    Parse a JSON-LD object into an RDF graph and serialize it to Turtle bytes.
     """
-    # Ensure we pass a JSON string to rdflib.parse(data=..., format='json-ld')
-    jsonld_str = json.dumps(jsonld_obj)
+    if jsonld_obj is None:
+        return b""
+
+    if isinstance(jsonld_obj, (bytes, bytearray)):
+        jsonld_str = jsonld_obj.decode("utf-8", errors="replace")
+    elif isinstance(jsonld_obj, str):
+        jsonld_str = jsonld_obj
+    else:
+        jsonld_str = json.dumps(jsonld_obj, ensure_ascii=False)
 
     g = Graph()
-    # If your JSON-LD uses external @context URLs, rdflib can resolve them when network is allowed.
-    # If your runtime is offline, ensure @context is inlined or provide a local mapping.
     g.parse(data=jsonld_str, format="json-ld")
 
-    # 'xml' (aka application/rdf+xml) is standard RDF/XML output
-    ttl: bytes = g.serialize(format="ttl")
-    # rdflib returns str in some versions and bytes in others; normalize to bytes
-    if isinstance(ttl, str):
-        ttl = ttl.encode("utf-8")
-    return ttl
+    turtle_data = g.serialize(format="turtle")
+    if isinstance(turtle_data, str):
+        turtle_data = turtle_data.encode("utf-8")
+
+    return turtle_data or b""

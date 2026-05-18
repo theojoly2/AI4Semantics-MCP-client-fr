@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 # Standard library imports
 from typing import Any, Optional, Literal
 from pathlib import Path
@@ -7,8 +8,10 @@ from io import BytesIO
 import asyncio
 import logging
 
+
 # Streamlit UI imports
 import streamlit as st
+
 
 # Local application imports
 from clients import MCPClient
@@ -121,6 +124,55 @@ def _detect_file_type(
 def _get_model_name(default: str = "export") -> str:
     value = (st.session_state.get("name") or default).strip()
     return value or default
+
+
+def _normalize_uploaded_model(
+    *,
+    kind: Literal["xml", "xmi", "ttl"],
+    uploaded_json: dict[str, Any],
+    server_model: Optional[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    Preserve round-trip fields after server upload so both exports stay available.
+    """
+    model = dict(server_model or {})
+
+    if kind == "ttl":
+        model.setdefault("source_format", "ttl")
+        model.setdefault("ttl_raw", uploaded_json.get("ttl_raw", ""))
+
+        if uploaded_json.get("ttl") and not model.get("ttl"):
+            model["ttl"] = uploaded_json["ttl"]
+
+        if not model.get("elements") and uploaded_json.get("elements"):
+            model["elements"] = uploaded_json.get("elements", [])
+
+        if not model.get("connectors") and uploaded_json.get("connectors"):
+            model["connectors"] = uploaded_json.get("connectors", [])
+
+        if not isinstance(model.get("xmi"), dict):
+            model["xmi"] = {
+                "elements": model.get("elements", []),
+                "connectors": model.get("connectors", []),
+            }
+
+        return model
+
+    model.setdefault("source_format", "xmi")
+
+    if not model.get("elements") and uploaded_json.get("elements"):
+        model["elements"] = uploaded_json.get("elements", [])
+
+    if not model.get("connectors") and uploaded_json.get("connectors"):
+        model["connectors"] = uploaded_json.get("connectors", [])
+
+    if not isinstance(model.get("xmi"), dict):
+        model["xmi"] = {
+            "elements": model.get("elements", []),
+            "connectors": model.get("connectors", []),
+        }
+
+    return model
 
 
 def _build_ttl_bytes(json_data: dict[str, Any]) -> bytes:
@@ -239,6 +291,12 @@ async def upload_xml(uploaded_file: BytesIO) -> dict[str, Any]:
                     "package": st.session_state["package"],
                     "tags": [],
                 })
+
+                json_data["elements"] = elements
+                json_data["xmi"] = {
+                    "elements": json_data.get("elements", []),
+                    "connectors": json_data.get("connectors", []),
+                }
             except Exception as e:
                 show_user_error("Could not append the 'Generated' package.", details=str(e))
                 return {}
@@ -255,6 +313,12 @@ async def upload_xml(uploaded_file: BytesIO) -> dict[str, Any]:
             json_data["source_format"] = "ttl"
             json_data["ttl_raw"] = file_bytes.decode("utf-8", errors="replace")
 
+            if "elements" in json_data or "connectors" in json_data:
+                json_data["xmi"] = {
+                    "elements": json_data.get("elements", []),
+                    "connectors": json_data.get("connectors", []),
+                }
+
         try:
             async with mcp_client:
                 model = await with_timeout(
@@ -268,18 +332,11 @@ async def upload_xml(uploaded_file: BytesIO) -> dict[str, Any]:
             show_user_error("Uploading the model to the server failed.", details=str(e))
             return {}
 
-        model = model or {}
-
-        # Reinject source info if the server did not preserve it
-        if kind == "ttl":
-            model.setdefault("source_format", "ttl")
-            model.setdefault("ttl_raw", json_data.get("ttl_raw", ""))
-
-            if json_data.get("ttl") and not model.get("ttl"):
-                model["ttl"] = json_data["ttl"]
-
-        else:
-            model.setdefault("source_format", "xmi")
+        model = _normalize_uploaded_model(
+            kind=kind,
+            uploaded_json=json_data,
+            server_model=model or {},
+        )
 
         st.session_state["model"] = model
         return model
@@ -302,6 +359,7 @@ def download_xml(json_data: dict[str, Any], disabled: bool = False) -> None:
     A failure in one export must not prevent the other from rendering.
     """
     model_name = _get_model_name("export")
+    source_format = str(json_data.get("source_format", "")).lower()
 
     ttl_bytes = b""
     xmi_bytes = b""
@@ -323,6 +381,10 @@ def download_xml(json_data: dict[str, Any], disabled: bool = False) -> None:
     col_ttl, col_xmi = st.columns(2, gap="small")
 
     with col_ttl:
+        ttl_label = "Exporter en TTL"
+        if source_format == "ttl":
+            ttl_label = "Exporter en TTL (source)"
+
         if disabled:
             st.button(
                 "⏳ Export TTL indisponible",
@@ -332,7 +394,7 @@ def download_xml(json_data: dict[str, Any], disabled: bool = False) -> None:
             )
         elif ttl_bytes:
             st.download_button(
-                label="Exporter en TTL",
+                label=ttl_label,
                 data=ttl_bytes,
                 file_name=f"{model_name}.ttl",
                 mime="text/turtle",
@@ -350,6 +412,10 @@ def download_xml(json_data: dict[str, Any], disabled: bool = False) -> None:
                 st.caption(f"Erreur TTL : {ttl_error}")
 
     with col_xmi:
+        xmi_label = "Exporter en XMI"
+        if source_format == "xmi":
+            xmi_label = "Exporter en XMI (source)"
+
         if disabled:
             st.button(
                 "⏳ Export XMI indisponible",
@@ -359,7 +425,7 @@ def download_xml(json_data: dict[str, Any], disabled: bool = False) -> None:
             )
         elif xmi_bytes:
             st.download_button(
-                label="Exporter en XMI",
+                label=xmi_label,
                 data=xmi_bytes,
                 file_name=f"{model_name}.xmi",
                 mime="application/xml",
