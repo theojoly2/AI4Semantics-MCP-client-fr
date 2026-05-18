@@ -587,7 +587,7 @@ class MCPClient:
             "user_question": arguments["user_question"],
             "allowed_executor_tools": sorted(list(self.EXPOSED_TOOLS)),
             "observations": arguments.get("observations") or [],
-            "max_steps": arguments.get("max_steps", 10),
+            "max_steps": arguments.get("max_steps", 5),
         }
         payload["tool_arguments"] = call_args
 
