@@ -1,5 +1,5 @@
-
 from __future__ import annotations
+
 
 # Standard library imports
 from typing import Optional, Any
@@ -8,8 +8,10 @@ import logging
 from json import loads
 from os import environ
 
+
 # Third-party imports
 import streamlit as st
+
 
 # OpenAI and local application imports
 from openai.types.chat import (
@@ -23,10 +25,11 @@ from clients import MCPClient
 from chat_history import ChatHistory
 from .data_model_utils.chat_data_structure import shorten_json
 
+
 # ----------------------------------------------------------------------
 # Config & logging
 # ----------------------------------------------------------------------
-CONTACT_EMAIL = "emilien.caudron@pwc.com"  # Dummy email per your request
+CONTACT_EMAIL = "emilien.caudron@pwc.com"
 LOGGER_NAME = "data_modelling_chat_chatbox"
 logger = logging.getLogger(LOGGER_NAME)
 logger.setLevel(logging.INFO)
@@ -44,14 +47,12 @@ def show_user_error(title: str, details: Optional[str] = None) -> None:
     """
     Persist error info so it survives reruns, and show immediate UI feedback.
     """
-    # Persist to session_state for rendering on subsequent runs
     st.session_state["ui_error"] = {
         "title": title,
         "details": details or "",
         "contact_email": CONTACT_EMAIL,
     }
 
-    # Optional immediate transient status (will disappear on rerun)
     try:
         with st.status(title, expanded=True, state="error") as status:
             if details:
@@ -64,7 +65,6 @@ def show_user_error(title: str, details: Optional[str] = None) -> None:
             )
             status.update(label="Action required", state="error")
     except Exception:
-        # Fallback for environments without st.status
         st.error(title)
         if details:
             st.write(details)
@@ -91,6 +91,7 @@ def with_timeout(coro, seconds: float = 45.0, on_timeout_msg: str = ""):
             return None
     return _runner()
 
+
 def safe_json_loads(text: Optional[str]) -> dict:
     """
     Parse JSON safely, returning {} on failure and logging the error.
@@ -103,6 +104,43 @@ def safe_json_loads(text: Optional[str]) -> dict:
         logger.exception("JSON parsing failed: %s", e)
         return {}
 
+
+def _consume_skip_user_echo_flag() -> bool:
+    """
+    Consume one-shot flag used to avoid rendering the same user message twice.
+    """
+    skip = bool(st.session_state.get("_suppress_user_echo_once", False))
+    if skip:
+        st.session_state["_suppress_user_echo_once"] = False
+    return skip
+
+
+def _build_tool_expander_label(parsed_tool: Any, fallback_name: Optional[str] = None) -> str:
+    """
+    Build a readable collapsed title for tool output blocks.
+    """
+    tool_name = fallback_name or "tool_call"
+
+    if isinstance(parsed_tool, dict):
+        tool_name = parsed_tool.get("tool_name") or fallback_name or "tool_call"
+
+    return f"🛠 {tool_name}"
+
+
+def _render_tool_output(content: str, fallback_name: Optional[str] = None) -> None:
+    """
+    Render tool output in a collapsed expander with a readable title.
+    """
+    parsed = safe_json_loads(content)
+    label = _build_tool_expander_label(parsed, fallback_name=fallback_name)
+
+    with st.expander(label, expanded=False):
+        if parsed:
+            st.json(parsed, expanded=2)
+        else:
+            st.code(content)
+
+
 # ----------------------------------------------------------------------
 # Layout
 # ----------------------------------------------------------------------
@@ -113,22 +151,25 @@ def set_chatbox_layout() -> None:
     """
     st.title("Model Bot")
 
-    # display history safely
-    for msg in st.session_state['history'].messages:
+    history = st.session_state.get("history")
+    if not history:
+        return
+
+    for msg in history.messages:
         role = msg.get("role")
         content = msg.get("content")
-        if role == "user" and content:
-            st.chat_message("human").write(content)
-        elif role == "assistant" and content:
-            st.chat_message("ai").write(content)
-        elif role == "tool" and content:
-            parsed = safe_json_loads(content)
-            if parsed:
-                st.json(parsed, expanded=False)
-            else:
-                st.code(content)
 
-    # Fix CSS (added missing colon)
+        if role == "user" and content:
+            with st.chat_message("user"):
+                st.write(content)
+
+        elif role == "assistant" and content:
+            with st.chat_message("assistant"):
+                st.write(content)
+
+        elif role == "tool" and content:
+            _render_tool_output(content)
+
     st.markdown(
         """
         <style>
@@ -156,6 +197,7 @@ def set_chatbox_layout() -> None:
         unsafe_allow_html=True,
     )
 
+
 # ----------------------------------------------------------------------
 # Chat processing
 # ----------------------------------------------------------------------
@@ -168,10 +210,12 @@ async def process_user_input(user_input: str | None) -> None:
         if user_input is None:
             return
 
-        # Display the user's message in the chat
-        st.chat_message("human").write(user_input)
+        skip_user_echo = _consume_skip_user_echo_flag()
 
-        # Read model context if available
+        if not skip_user_echo:
+            with st.chat_message("user"):
+                st.write(user_input)
+
         model = st.session_state.get("model", {})
         model_prompt = ""
         if model and "elements" in model:
@@ -189,7 +233,6 @@ async def process_user_input(user_input: str | None) -> None:
                 "",
             ])
 
-        # Gather available tools from the MCP client
         async with st.session_state["mcp_client"] as mcp_client:
             tools = await with_timeout(
                 mcp_client.tools(),
@@ -197,10 +240,8 @@ async def process_user_input(user_input: str | None) -> None:
                 on_timeout_msg="listing tools took too long."
             ) or []
             if tools is None:
-                # Already surfaced error; stop
                 return
 
-        # Add the user message (with model context) to the chat history
         user_message = ChatCompletionUserMessageParam(
             role="user",
             content=f"{model_prompt}{user_input}"
@@ -208,11 +249,9 @@ async def process_user_input(user_input: str | None) -> None:
         history: ChatHistory = st.session_state["history"]
         history.messages.append(user_message)
 
-        # Completion client for LLM responses
         completions: AsyncCompletions = st.session_state["completions"]
         completion_params = st.session_state.get("completion_params", {})
 
-        # Chat loop: generate a response, call tools, and repeat until no tool call is needed
         loop = True
         while loop:
             try:
@@ -230,22 +269,25 @@ async def process_user_input(user_input: str | None) -> None:
                     on_timeout_msg="Generating assistant response took too long."
                 )
                 if response is None:
-                    # Error already shown persistently
                     return
             except Exception as e:
                 show_user_error(
                     "A critical error occurred while generating the assistant response.",
                     details=str(e)
                 )
-                # Mirror the error inline in the chat area for context
-                st.chat_message("ai").write(f"⚠️ A critical error occurred while generating the assistant response.\n\n{e}")
-                return  # Do not rerun; banner will persist
+                with st.chat_message("assistant"):
+                    st.write(
+                        "⚠️ A critical error occurred while generating the assistant response.\n\n"
+                        f"{e}"
+                    )
+                return
 
             try:
                 message: ChatCompletionMessage = response.choices[0].message
                 content = message.content or ""
                 if content:
-                    st.chat_message("ai").write(content)
+                    with st.chat_message("assistant"):
+                        st.write(content)
 
                 if message.tool_calls:
                     tool_calls: list[ChatCompletionMessageToolCallParam] = [
@@ -259,7 +301,7 @@ async def process_user_input(user_input: str | None) -> None:
                         )
                         for tool_call in message.tool_calls
                     ]
-                    # Add the assistant message and tool calls to history
+
                     history.add_assistant_message(content=content, tool_calls=tool_calls)
 
                     for tool_call in tool_calls:
@@ -276,76 +318,79 @@ async def process_user_input(user_input: str | None) -> None:
                                     on_timeout_msg=f"Calling tool '{name}' took too long."
                                 )
                                 if tool_message is None:
-                                    # Error already shown persistently
                                     return
                         except Exception as e:
                             show_user_error(
                                 f"A critical error occurred while calling tool '{name}'.",
                                 details=str(e)
                             )
-                            st.chat_message("ai").write(f"⚠️ Tool error in '{name}': {e}")
+                            with st.chat_message("assistant"):
+                                st.write(f"⚠️ Tool error in '{name}': {e}")
                             return
 
                         try:
+                            _render_tool_output(tool_message, fallback_name=name)
+
                             parsed_tool = safe_json_loads(tool_message)
-                            if parsed_tool:
-                                st.json(parsed_tool, expanded=2)
-                            else:
-                                st.code(tool_message)
 
                             history.add_tool_message(
                                 content=tool_message,
                                 tool_call_id=tool_call["id"],
                             )
 
-                            if name == 'style_guide_check':
+                            if name == "style_guide_check":
                                 try:
                                     report = parsed_tool.get("tool_results", {}).get("report", "")
                                     if report:
-                                        st.chat_message("ai").write(report)
+                                        with st.chat_message("assistant"):
+                                            st.write(report)
                                         history.add_assistant_message(report)
                                     else:
-                                        st.chat_message("ai").write("Style guide check completed.")
+                                        with st.chat_message("assistant"):
+                                            st.write("Style guide check completed.")
                                 except Exception as e:
                                     show_user_error(
                                         "A critical error occurred while displaying the style guide report.",
                                         details=str(e)
                                     )
-                                    st.chat_message("ai").write(f"⚠️ Style guide display error: {e}")
+                                    with st.chat_message("assistant"):
+                                        st.write(f"⚠️ Style guide display error: {e}")
                                     return
-                                # End the loop after style guide check
+
                                 loop = False
+
                         except Exception as e:
                             show_user_error(
                                 f"A critical error occurred while processing tool output for '{name}'.",
                                 details=str(e)
                             )
-                            st.chat_message("ai").write(f"⚠️ Tool output processing error for '{name}': {e}")
+                            with st.chat_message("assistant"):
+                                st.write(f"⚠️ Tool output processing error for '{name}': {e}")
                             return
                 else:
-                    # No tool calls: add the assistant message and exit loop
                     history.add_assistant_message(content)
                     loop = False
+
             except Exception as e:
                 show_user_error(
                     "A critical error occurred while processing the assistant message.",
                     details=str(e)
                 )
-                st.chat_message("ai").write(f"⚠️ Assistant message processing error: {e}")
+                with st.chat_message("assistant"):
+                    st.write(f"⚠️ Assistant message processing error: {e}")
                 return
 
-        # Remove the model context from the last user message and save the conversation
         user_message["content"] = user_input
         try:
             history.save()
         except Exception as e:
-            # Saving failure should not crash the UI; surface guidance persistently
             show_user_error("Saving the conversation failed.", details=str(e))
-            st.chat_message("ai").write(f"⚠️ Saving conversation failed: {e}")
+            with st.chat_message("assistant"):
+                st.write(f"⚠️ Saving conversation failed: {e}")
         return
 
     except Exception as e:
         show_user_error("A critical unexpected error occurred in chat processing.", details=str(e))
-        st.chat_message("ai").write(f"⚠️ Unexpected chat processing error: {e}")
+        with st.chat_message("assistant"):
+            st.write(f"⚠️ Unexpected chat processing error: {e}")
         return
-

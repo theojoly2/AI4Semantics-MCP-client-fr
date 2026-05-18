@@ -200,6 +200,58 @@ def _inject_layout_css() -> None:
                 opacity: 0.5 !important;
                 cursor: not-allowed !important;
             }
+
+            /* Cache l'indicateur global Streamlit en haut à droite */
+            div[data-testid="stStatusWidget"] {
+                display: none !important;
+            }
+
+            [data-testid="stToolbar"] button[kind="header"] {
+                display: none !important;
+            }
+
+            .chat-thinking-wrap {
+                display: flex;
+                align-items: center;
+                gap: 0.65rem;
+                color: #6b7280;
+                font-size: 0.95rem;
+                min-height: 24;
+                padding: 0;
+            }
+
+            .chat-thinking-spinner {
+                display: inline-block;
+                width: 16px;
+                height: 16px;
+                border: 2px solid rgba(107, 114, 128, 0.25);
+                border-top-color: rgba(107, 114, 128, 0.95);
+                border-radius: 50%;
+                animation: chat-thinking-spin 0.8s linear infinite;
+                transform: translateY(-7.5px);
+            }
+
+            .chat-thinking-label {
+                display: flex;
+                align-items: center;
+                line-height: 1;
+                margin: -1;
+                padding: 0;
+                transform: translateY(-7px);
+            }
+
+            .chat-thinking-label p,
+            .chat-thinking-label span,
+            .chat-thinking-label div {
+                margin: 0 !important;
+                padding: 0 !important;
+                line-height: 1 !important;
+            }
+
+            @keyframes chat-thinking-spin {
+                from { transform: translateY(-7.5px) rotate(0deg); }
+                to { transform: translateY(-7.5px) rotate(360deg); }
+            }
         </style>
         """,
         unsafe_allow_html=True,
@@ -215,6 +267,13 @@ def _toggle_visualisation_panel() -> None:
     st.session_state["panel_collapsed"] = not st.session_state.get("panel_collapsed", False)
 
 
+def _clear_generation_state() -> None:
+    st.session_state["_generating"] = False
+    st.session_state["_pending_input"] = None
+    st.session_state["_pending_user_message"] = None
+    st.session_state["_suppress_user_echo_once"] = False
+
+
 def _init_state(server: str) -> ChatHistory:
     if not environ.get("LLM_MODEL"):
         raise RuntimeError("Missing LLM_MODEL environment variable.")
@@ -224,6 +283,8 @@ def _init_state(server: str) -> ChatHistory:
     st.session_state.setdefault("model", {})
     st.session_state.setdefault("_generating", False)
     st.session_state.setdefault("_pending_input", None)
+    st.session_state.setdefault("_pending_user_message", None)
+    st.session_state.setdefault("_suppress_user_echo_once", False)
 
     if "history" not in st.session_state:
         st.session_state["history"] = ChatHistory()
@@ -248,13 +309,13 @@ def _render_connection_sidebar(chat_history: ChatHistory) -> None:
 
         if not chat_history.user:
             user_value = st.text_input(
-                "Enter User",
+                "Nom d'utilisateur",
                 key="sidebar_user_value",
                 placeholder="Votre identifiant",
                 disabled=is_generating,
             )
             if st.button(
-                "Set User",
+                "Valider l'utilisateur",
                 key="sidebar_set_user",
                 use_container_width=True,
                 disabled=is_generating,
@@ -268,17 +329,17 @@ def _render_connection_sidebar(chat_history: ChatHistory) -> None:
                 st.rerun()
 
         else:
-            st.write(f"**User:** {chat_history.user}")
+            st.write(f"**Utilisateur:** {chat_history.user}")
 
             if not chat_history.name:
                 session_value = st.text_input(
-                    "Enter Session",
+                    "Nom de la session",
                     key="sidebar_session_value",
                     placeholder="Nom de session",
                     disabled=is_generating,
                 )
                 if st.button(
-                    "Set Session",
+                    "Valider la session",
                     key="sidebar_set_session",
                     use_container_width=True,
                     disabled=is_generating,
@@ -302,13 +363,13 @@ def _render_connection_sidebar(chat_history: ChatHistory) -> None:
                 st.write(f"**Session:** {chat_history.name}")
 
                 reload_session = st.text_input(
-                    "Session to load",
+                    "Session à charger",
                     key="sidebar_reload_session",
                     placeholder="Session existante",
                     disabled=is_generating,
                 )
                 if st.button(
-                    "Load Session",
+                    "Charger la session",
                     key="sidebar_load_session",
                     use_container_width=True,
                     disabled=is_generating,
@@ -336,7 +397,7 @@ def _render_connection_sidebar(chat_history: ChatHistory) -> None:
             else "Afficher le canvas"
         )
         if st.button(
-            "⏳ Génération en cours..." if is_generating else toggle_label,
+            "Génération en cours..." if is_generating else toggle_label,
             key="sidebar_toggle_visualisation",
             use_container_width=True,
             disabled=is_generating,
@@ -415,10 +476,10 @@ async def _render_model_panel() -> None:
 
     if not model:
         uploaded_file = st.file_uploader(
-            "Upload an XML/TTL document",
+            "Importer un document XML/TTL",
             type=["xml", "ttl", "xmi"],
             accept_multiple_files=False,
-            help="Upload your data model as an XML export from EA or a TTL file",
+            help="Importez votre modèle de données au format XML exporté depuis EA ou en fichier TTL",
             key="model_file_uploader",
             disabled=is_generating,
         )
@@ -468,18 +529,47 @@ def _render_page_bottom_guard(height_px: int = 56) -> None:
     )
 
 
+def _render_thinking_message(placeholder) -> None:
+    with placeholder.container():
+        with st.chat_message("assistant"):
+            st.markdown(
+                """
+                <div class="chat-thinking-wrap">
+                    <span class="chat-thinking-spinner"></span>
+                    <span class="chat-thinking-label">Le chatbot réfléchit...</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
 async def _render_chat_panel(user_input: Optional[str] = None) -> None:
     st.markdown("<div class='chat-scroll-anchor'></div>", unsafe_allow_html=True)
 
     with st.container(height=540, border=False):
         set_chatbox_layout()
 
+        pending_user_message = st.session_state.get("_pending_user_message")
+
+        if pending_user_message:
+            with st.chat_message("user"):
+                st.markdown(pending_user_message)
+
+        bottom_placeholder = st.empty()
+
         if user_input:
+            _render_thinking_message(bottom_placeholder)
+            st.session_state["_suppress_user_echo_once"] = True
+
             try:
                 await process_user_input(user_input)
             finally:
-                st.session_state["_generating"] = False
+                _clear_generation_state()
+
             st.rerun()
+
+        elif st.session_state.get("_generating", False):
+            _render_thinking_message(bottom_placeholder)
 
 
 # ----------------------------------------------------------------------
@@ -533,7 +623,7 @@ async def data_modelling_chat_tab(server: str) -> None:
 
         with input_center:
             user_input = st.chat_input(
-                "⏳ Génération en cours..." if is_generating else "Your message",
+                "Génération en cours..." if is_generating else "Votre message",
                 key="xmi_chat_input",
                 width="stretch",
                 disabled=is_generating,
@@ -544,6 +634,7 @@ async def data_modelling_chat_tab(server: str) -> None:
         if user_input and not is_generating:
             st.session_state["_generating"] = True
             st.session_state["_pending_input"] = user_input
+            st.session_state["_pending_user_message"] = user_input
             st.rerun()
 
         with chat_container:
@@ -552,6 +643,7 @@ async def data_modelling_chat_tab(server: str) -> None:
             )
 
     except Exception as e:
+        _clear_generation_state()
         show_user_error(
             "A critical error occurred in the model/visualisation/chat interface.",
             details=str(e),
