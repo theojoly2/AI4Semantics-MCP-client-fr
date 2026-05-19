@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-
 # Standard library imports
-from typing import Optional, Any
+from typing import Optional, Any, Callable, Awaitable
 import asyncio
 import logging
 from json import loads
 from os import environ
 
-
 # Third-party imports
 import streamlit as st
-
 
 # OpenAI and local application imports
 from openai.types.chat import (
@@ -201,7 +198,10 @@ def set_chatbox_layout() -> None:
 # ----------------------------------------------------------------------
 # Chat processing
 # ----------------------------------------------------------------------
-async def process_user_input(user_input: str | None) -> None:
+async def process_user_input(
+    user_input: str | None,
+    on_model_mutation: Optional[Callable[[str, Any], Awaitable[None]]] = None,
+) -> None:
     """
     Handles user input, generates LLM responses, and processes tool calls in the chat interface.
     Ensures robust error handling and user feedback for all major operations.
@@ -237,14 +237,14 @@ async def process_user_input(user_input: str | None) -> None:
             tools = await with_timeout(
                 mcp_client.tools(),
                 seconds=3000.0,
-                on_timeout_msg="listing tools took too long."
+                on_timeout_msg="listing tools took too long.",
             ) or []
             if tools is None:
                 return
 
         user_message = ChatCompletionUserMessageParam(
             role="user",
-            content=f"{model_prompt}{user_input}"
+            content=f"{model_prompt}{user_input}",
         )
         history: ChatHistory = st.session_state["history"]
         history.messages.append(user_message)
@@ -266,14 +266,14 @@ async def process_user_input(user_input: str | None) -> None:
                         extra_body=completion_params.get("extra_body"),
                     ),
                     seconds=3000.0,
-                    on_timeout_msg="Generating assistant response took too long."
+                    on_timeout_msg="Generating assistant response took too long.",
                 )
                 if response is None:
                     return
             except Exception as e:
                 show_user_error(
                     "A critical error occurred while generating the assistant response.",
-                    details=str(e)
+                    details=str(e),
                 )
                 with st.chat_message("assistant"):
                     st.write(
@@ -285,6 +285,7 @@ async def process_user_input(user_input: str | None) -> None:
             try:
                 message: ChatCompletionMessage = response.choices[0].message
                 content = message.content or ""
+
                 if content:
                     with st.chat_message("assistant"):
                         st.write(content)
@@ -307,22 +308,24 @@ async def process_user_input(user_input: str | None) -> None:
                     for tool_call in tool_calls:
                         function = tool_call["function"]
                         name = function["name"]
+
                         try:
                             args = safe_json_loads(function["arguments"])
                             if args is None:
                                 args = {}
+
                             async with st.session_state["mcp_client"] as mcp_client:
                                 tool_message = await with_timeout(
                                     mcp_client.call_tool(name, args),
                                     seconds=3000.0,
-                                    on_timeout_msg=f"Calling tool '{name}' took too long."
+                                    on_timeout_msg=f"Calling tool '{name}' took too long.",
                                 )
                                 if tool_message is None:
                                     return
                         except Exception as e:
                             show_user_error(
                                 f"A critical error occurred while calling tool '{name}'.",
-                                details=str(e)
+                                details=str(e),
                             )
                             with st.chat_message("assistant"):
                                 st.write(f"⚠️ Tool error in '{name}': {e}")
@@ -338,6 +341,16 @@ async def process_user_input(user_input: str | None) -> None:
                                 tool_call_id=tool_call["id"],
                             )
 
+                            if on_model_mutation is not None:
+                                try:
+                                    await on_model_mutation(name, parsed_tool or tool_message)
+                                except Exception as e:
+                                    logger.exception(
+                                        "Model refresh callback failed after tool '%s': %s",
+                                        name,
+                                        e,
+                                    )
+
                             if name == "style_guide_check":
                                 try:
                                     report = parsed_tool.get("tool_results", {}).get("report", "")
@@ -351,7 +364,7 @@ async def process_user_input(user_input: str | None) -> None:
                                 except Exception as e:
                                     show_user_error(
                                         "A critical error occurred while displaying the style guide report.",
-                                        details=str(e)
+                                        details=str(e),
                                     )
                                     with st.chat_message("assistant"):
                                         st.write(f"⚠️ Style guide display error: {e}")
@@ -362,7 +375,7 @@ async def process_user_input(user_input: str | None) -> None:
                         except Exception as e:
                             show_user_error(
                                 f"A critical error occurred while processing tool output for '{name}'.",
-                                details=str(e)
+                                details=str(e),
                             )
                             with st.chat_message("assistant"):
                                 st.write(f"⚠️ Tool output processing error for '{name}': {e}")
@@ -374,7 +387,7 @@ async def process_user_input(user_input: str | None) -> None:
             except Exception as e:
                 show_user_error(
                     "A critical error occurred while processing the assistant message.",
-                    details=str(e)
+                    details=str(e),
                 )
                 with st.chat_message("assistant"):
                     st.write(f"⚠️ Assistant message processing error: {e}")

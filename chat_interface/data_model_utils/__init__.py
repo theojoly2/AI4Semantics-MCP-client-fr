@@ -350,7 +350,11 @@ async def upload_xml(uploaded_file: BytesIO) -> dict[str, Any]:
 # ----------------------------------------------------------------------
 # Download buttons
 # ----------------------------------------------------------------------
-def download_xml(json_data: dict[str, Any], disabled: bool = False) -> None:
+def download_xml(
+    json_data: dict[str, Any],
+    disabled: bool = False,
+    key_prefix: str = "model",
+) -> None:
     """
     Render two independent download buttons:
     - Exporter en TTL
@@ -358,6 +362,9 @@ def download_xml(json_data: dict[str, Any], disabled: bool = False) -> None:
 
     A failure in one export must not prevent the other from rendering.
     """
+    def _k(name: str) -> str:
+        return f"{key_prefix}_{name}"
+
     model_name = _get_model_name("export")
     source_format = str(json_data.get("source_format", "")).lower()
 
@@ -390,7 +397,7 @@ def download_xml(json_data: dict[str, Any], disabled: bool = False) -> None:
                 "⏳ Export TTL indisponible",
                 disabled=True,
                 use_container_width=True,
-                key="download_ttl_disabled_generating",
+                key=_k("download_ttl_disabled_generating"),
             )
         elif ttl_bytes:
             st.download_button(
@@ -399,14 +406,14 @@ def download_xml(json_data: dict[str, Any], disabled: bool = False) -> None:
                 file_name=f"{model_name}.ttl",
                 mime="text/turtle",
                 use_container_width=True,
-                key="download_ttl_button",
+                key=_k("download_ttl_button"),
             )
         else:
             st.button(
                 "Export TTL indisponible",
                 disabled=True,
                 use_container_width=True,
-                key="download_ttl_disabled_empty",
+                key=_k("download_ttl_disabled_empty"),
             )
             if ttl_error:
                 st.caption(f"Erreur TTL : {ttl_error}")
@@ -421,7 +428,7 @@ def download_xml(json_data: dict[str, Any], disabled: bool = False) -> None:
                 "⏳ Export XMI indisponible",
                 disabled=True,
                 use_container_width=True,
-                key="download_xmi_disabled_generating",
+                key=_k("download_xmi_disabled_generating"),
             )
         elif xmi_bytes:
             st.download_button(
@@ -430,14 +437,14 @@ def download_xml(json_data: dict[str, Any], disabled: bool = False) -> None:
                 file_name=f"{model_name}.xmi",
                 mime="application/xml",
                 use_container_width=True,
-                key="download_xmi_button",
+                key=_k("download_xmi_button"),
             )
         else:
             st.button(
                 "Export XMI indisponible",
                 disabled=True,
                 use_container_width=True,
-                key="download_xmi_disabled_empty",
+                key=_k("download_xmi_disabled_empty"),
             )
             if xmi_error:
                 st.caption(f"Erreur XMI : {xmi_error}")

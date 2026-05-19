@@ -5,8 +5,10 @@ from io import BytesIO
 import asyncio
 import logging
 from os import environ
+import uuid
 
 import streamlit as st
+from streamlit.delta_generator import DeltaGenerator
 
 # Local application imports
 from clients import OpenAIClient, MCPClient
@@ -27,6 +29,13 @@ if not logger.handlers:
     _h.setLevel(logging.INFO)
     _h.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s"))
     logger.addHandler(_h)
+
+
+MODEL_MUTATION_TOOLS = {
+    "add_class",
+    "add_attribute",
+    "add_connector",
+}
 
 
 # ----------------------------------------------------------------------
@@ -84,6 +93,10 @@ def safe_json_loads(text: Optional[str]) -> dict:
 # ----------------------------------------------------------------------
 # Internal helpers
 # ----------------------------------------------------------------------
+def _new_model_render_prefix() -> str:
+    return f"model_render_{uuid.uuid4().hex}"
+
+
 def _inject_layout_css() -> None:
     st.markdown(
         """
@@ -201,7 +214,6 @@ def _inject_layout_css() -> None:
                 cursor: not-allowed !important;
             }
 
-            /* Cache l'indicateur global Streamlit en haut à droite */
             div[data-testid="stStatusWidget"] {
                 display: none !important;
             }
@@ -285,6 +297,7 @@ def _init_state(server: str) -> ChatHistory:
     st.session_state.setdefault("_pending_input", None)
     st.session_state.setdefault("_pending_user_message", None)
     st.session_state.setdefault("_suppress_user_echo_once", False)
+    st.session_state.setdefault("_model_render_prefix", _new_model_render_prefix())
 
     if "history" not in st.session_state:
         st.session_state["history"] = ChatHistory()
@@ -430,7 +443,110 @@ async def _load_model_if_possible() -> dict[str, Any]:
     return model
 
 
-async def _render_model_panel() -> None:
+async def _render_model_panel_content(model_slot: DeltaGenerator) -> None:
+    is_generating = st.session_state.get("_generating", False)
+
+    with model_slot.container():
+        if not all(bool(st.session_state.get(required)) for required in {"user", "name"}):
+            st.info("Définissez d'abord un utilisateur et une session dans la barre latérale.")
+            return
+
+        model = st.session_state.get("model", {})
+
+        if not model:
+            uploaded_file = st.file_uploader(
+                "Importer un document XML/TTL",
+                type=["xml", "ttl", "xmi"],
+                accept_multiple_files=False,
+                help="Importez votre modèle de données au format XML exporté depuis EA ou en fichier TTL",
+                key="model_file_uploader",
+                disabled=is_generating,
+            )
+
+            if uploaded_file is not None:
+                try:
+                    file_buffer: BytesIO = uploaded_file
+                    st.session_state["model"] = await with_timeout(
+                        upload_xml(file_buffer),
+                        seconds=60.0,
+                        on_timeout_msg="Uploading/parsing the file took too long.",
+                    ) or {}
+                    st.session_state["_model_render_prefix"] = _new_model_render_prefix()
+                    st.rerun()
+                except Exception as e:
+                    show_user_error(
+                        "A critical error occurred while uploading the file.",
+                        details=str(e),
+                    )
+            return
+
+        try:
+            render_key_prefix = st.session_state.get(
+                "_model_render_prefix",
+                "model_render_default",
+            )
+            download_xml(
+                model,
+                disabled=is_generating,
+                key_prefix=render_key_prefix,
+            )
+        except Exception as e:
+            logger.exception("Rendering export buttons failed: %s", e)
+            show_user_error(
+                "A critical error occurred while preparing model exports.",
+                details=str(e),
+            )
+            return
+
+        try:
+            if "xmi" in model:
+                visualise(model["xmi"])
+            else:
+                visualise(model)
+        except Exception as e:
+            logger.exception("Visualising model failed: %s", e)
+            show_user_error(
+                "A critical error occurred while visualising the model.",
+                details=str(e),
+            )
+
+
+async def _refresh_model_panel(model_slot: Optional[DeltaGenerator]) -> None:
+    if model_slot is None:
+        return
+
+    if not (st.session_state.get("user") and st.session_state.get("name")):
+        return
+
+    try:
+        async with st.session_state["mcp_client"] as mcp_client:
+            loaded_model = await with_timeout(
+                mcp_client.read_model(),
+                seconds=20.0,
+                on_timeout_msg="Refreshing the model took too long.",
+            )
+
+        if loaded_model:
+            st.session_state["model"] = loaded_model
+
+            if loaded_model.get("elements"):
+                root: dict[str, Any] = loaded_model["elements"][0]
+                st.session_state["ID"] = root.get("ID")
+                st.session_state["package"] = root.get("package")
+
+        st.session_state["_model_render_prefix"] = _new_model_render_prefix()
+        model_slot.empty()
+        await _render_model_panel_content(model_slot)
+
+    except Exception as e:
+        logger.exception("Refreshing model panel failed: %s", e)
+        show_user_error(
+            "A critical error occurred while refreshing the model visualisation.",
+            details=str(e),
+        )
+
+
+async def _render_model_panel() -> Optional[DeltaGenerator]:
     is_generating = st.session_state.get("_generating", False)
 
     st.markdown("<div class='model-sticky-anchor'></div>", unsafe_allow_html=True)
@@ -452,7 +568,7 @@ async def _render_model_panel() -> None:
             unsafe_allow_html=True,
         )
         st.markdown("</div>", unsafe_allow_html=True)
-        return
+        return None
 
     toolbar_left, toolbar_right = st.columns([6, 1], gap="small")
     with toolbar_left:
@@ -468,58 +584,9 @@ async def _render_model_panel() -> None:
             _toggle_visualisation_panel()
             st.rerun()
 
-    if not all(bool(st.session_state.get(required)) for required in {"user", "name"}):
-        st.info("Définissez d'abord un utilisateur et une session dans la barre latérale.")
-        return
-
-    model = st.session_state.get("model", {})
-
-    if not model:
-        uploaded_file = st.file_uploader(
-            "Importer un document XML/TTL",
-            type=["xml", "ttl", "xmi"],
-            accept_multiple_files=False,
-            help="Importez votre modèle de données au format XML exporté depuis EA ou en fichier TTL",
-            key="model_file_uploader",
-            disabled=is_generating,
-        )
-
-        if uploaded_file is not None:
-            try:
-                file_buffer: BytesIO = uploaded_file
-                st.session_state["model"] = await with_timeout(
-                    upload_xml(file_buffer),
-                    seconds=60.0,
-                    on_timeout_msg="Uploading/parsing the file took too long.",
-                ) or {}
-                st.rerun()
-            except Exception as e:
-                show_user_error(
-                    "A critical error occurred while uploading the file.",
-                    details=str(e),
-                )
-        return
-
-    try:
-        download_xml(model, disabled=is_generating)
-    except Exception as e:
-        logger.exception("Rendering export buttons failed: %s", e)
-        show_user_error(
-            "A critical error occurred while preparing model exports.",
-            details=str(e),
-        )
-
-    try:
-        if "xmi" in model:
-            visualise(model["xmi"])
-        else:
-            visualise(model)
-    except Exception as e:
-        logger.exception("Visualising model failed: %s", e)
-        show_user_error(
-            "A critical error occurred while visualising the model.",
-            details=str(e),
-        )
+    model_slot = st.empty()
+    await _render_model_panel_content(model_slot)
+    return model_slot
 
 
 def _render_page_bottom_guard(height_px: int = 56) -> None:
@@ -543,7 +610,10 @@ def _render_thinking_message(placeholder) -> None:
             )
 
 
-async def _render_chat_panel(user_input: Optional[str] = None) -> None:
+async def _render_chat_panel(
+    user_input: Optional[str] = None,
+    model_slot: Optional[DeltaGenerator] = None,
+) -> None:
     st.markdown("<div class='chat-scroll-anchor'></div>", unsafe_allow_html=True)
 
     with st.container(height=540, border=False):
@@ -561,8 +631,15 @@ async def _render_chat_panel(user_input: Optional[str] = None) -> None:
             _render_thinking_message(bottom_placeholder)
             st.session_state["_suppress_user_echo_once"] = True
 
+            async def on_model_mutation(tool_name: str, tool_result: Any = None) -> None:
+                if tool_name in MODEL_MUTATION_TOOLS:
+                    await _refresh_model_panel(model_slot)
+
             try:
-                await process_user_input(user_input)
+                await process_user_input(
+                    user_input,
+                    on_model_mutation=on_model_mutation,
+                )
             finally:
                 _clear_generation_state()
 
@@ -611,8 +688,10 @@ async def data_modelling_chat_tab(server: str) -> None:
                 vertical_alignment="top",
             )
 
+        model_slot: Optional[DeltaGenerator] = None
+
         with col_model:
-            await _render_model_panel()
+            model_slot = await _render_model_panel()
 
         with col_chat:
             chat_container = st.container()
@@ -639,7 +718,8 @@ async def data_modelling_chat_tab(server: str) -> None:
 
         with chat_container:
             await _render_chat_panel(
-                user_input=st.session_state.pop("_pending_input", None)
+                user_input=st.session_state.pop("_pending_input", None),
+                model_slot=model_slot,
             )
 
     except Exception as e:

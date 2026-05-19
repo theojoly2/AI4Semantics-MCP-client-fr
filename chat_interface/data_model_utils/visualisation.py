@@ -1,9 +1,22 @@
 from typing import Any
-from plantuml import PlantUML
 from io import BytesIO
 import json
 import re
 from collections import defaultdict
+import plantuml
+from plantuml import PlantUML, PlantUMLConnectionError
+
+
+class FixedPlantUMLHTTPError(PlantUMLConnectionError):
+    def __init__(self, response, content, *args, **kwdargs):
+        self.response = response
+        self.content = content
+        message = "%d: %s" % (self.response.status, self.response.reason)
+        self.message = message
+        super().__init__(message, *args, **kwdargs)
+
+
+plantuml.PlantUMLHTTPError = FixedPlantUMLHTTPError
 
 
 def _alias_from_id(element_id: str) -> str:
@@ -199,6 +212,6 @@ def get_image_bytes(
         print("\nPLANTUML:")
         print(plantuml_text)
 
-    server = PlantUML(url="http://www.plantuml.com/plantuml/img/")
+    server = PlantUML(url="https://www.plantuml.com/plantuml/img/")
     image_bytes = server.processes(plantuml_text)
     return BytesIO(image_bytes)
