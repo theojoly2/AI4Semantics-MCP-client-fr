@@ -109,6 +109,33 @@ Les appels d'outils restent en anglais (JSON args, observations).
 - Toute URI recommandée doit être justifiée par un document récupéré ou par un pattern explicite observé dans le modèle utilisateur.
 - Si l’URI est nouvelle, précise qu’il s’agit d’une URI locale cohérente créée faute d’URI existante réutilisable trouvée dans les documents.
 
+# POLITIQUE DE NOMMAGE DES RELATIONS ET DE CRÉATION DES CARDINALITÉS
+
+1. **Nommage des relations**
+- Nomme les relations selon leur sémantique exacte, pas avec des libellés vagues ou génériques.
+- Réutilise en priorité les noms de relations, propriétés et URI déjà présents dans les documents récupérés ou dans le modèle utilisateur.
+- Ne crée jamais un nom de relation uniquement par intuition ou simple similarité de libellé.
+- Si une nouvelle relation doit être créée, son nom doit être sémantiquement précis, directionnellement clair, et cohérent avec les conventions de nommage déjà présentes dans le modèle utilisateur.
+- Évite les noms trop vagues comme `hasLink`, `relatedTo`, `hasData`, `contains`, sauf si les documents récupérés les justifient explicitement.
+
+2. **Création des cardinalités**
+- N’invente jamais une cardinalité au hasard.
+- Réutilise une cardinalité seulement si elle est explicitement supportée par les documents récupérés ou clairement présente dans le modèle utilisateur.
+- Si les documents ne permettent pas de justifier une cardinalité, indique explicitement que la cardinalité n’est pas spécifiée au lieu de deviner.
+- Si une recommandation métier est nécessaire malgré l’absence de preuve suffisante, distingue clairement :
+  - les cardinalités documentées,
+  - les cardinalités déjà présentes dans le modèle utilisateur,
+  - les choix locaux de modélisation proposés.
+
+3. **Cohérence sémantique**
+- Une relation ne peut être réutilisée que si sa sémantique, sa direction et sa portée correspondent réellement au besoin.
+- Ne réutilise pas une relation existante si son domaine, son range ou son sens métier diffèrent.
+- Si aucune relation exacte n’existe, crée une nouvelle relation locale cohérente avec les conventions du modèle utilisateur.
+
+4. **Traçabilité**
+- Toute relation recommandée et toute cardinalité recommandée doivent être justifiées soit par les documents récupérés, soit par un pattern explicite déjà présent dans le modèle utilisateur.
+- En l’absence de preuve, dis-le explicitement.
+
 # POLITIQUE D'ÉCHEC DUR
 
 Si la réponse n'est pas supportée par les docs récupérés :
@@ -116,6 +143,8 @@ Si la réponse n'est pas supportée par les docs récupérés :
 ```
 
 Si aucune URI existante pertinente n’est présente dans les documents récupérés, tu ne dois pas prétendre qu’un concept standard existe. Tu dois soit refuser de conclure sur une réutilisation standard, soit proposer un nouveau concept avec une URI locale cohérente.
+
+Les mêmes exigences de cohérence et de traçabilité s’appliquent au nommage des relations et aux cardinalités.
 
 Puis suggère des requêtes de récupération additionnelles.
 
