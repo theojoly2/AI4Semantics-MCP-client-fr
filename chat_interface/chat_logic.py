@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 # Standard library imports
 from typing import Optional, Any, Callable, Awaitable
 import asyncio
@@ -7,15 +8,16 @@ import logging
 from json import loads
 from os import environ
 
+
 # Third-party imports
 import streamlit as st
+
 
 # OpenAI and local application imports
 from openai.types.chat import (
     ChatCompletion,
     ChatCompletionMessage,
     ChatCompletionMessageToolCallParam,
-    ChatCompletionUserMessageParam,
 )
 from openai.resources.chat.completions import AsyncCompletions
 from clients import MCPClient
@@ -135,7 +137,29 @@ def _render_tool_output(content: str, fallback_name: Optional[str] = None) -> No
         if parsed:
             st.json(parsed, expanded=2)
         else:
-            st.code(content)
+            st.write(content)
+
+
+def _build_current_model_prompt(model: Any) -> str:
+    if model and "elements" in model:
+        return "\n".join([
+            "[CURRENT MODEL]",
+            str(shorten_json(model)),
+            "",
+            "[CURRENT USER MESSAGE]",
+            "",
+        ])
+
+    if model and "ttl" in model:
+        return "\n".join([
+            "[CURRENT MODEL]",
+            str(model["ttl"]),
+            "",
+            "[CURRENT USER MESSAGE]",
+            "",
+        ])
+
+    return ""
 
 
 # ----------------------------------------------------------------------
@@ -144,7 +168,7 @@ def _render_tool_output(content: str, fallback_name: Optional[str] = None) -> No
 def set_chatbox_layout() -> None:
     """
     Sets up the chat interface layout in Streamlit, including message display and UI fixes.
-    Displays the conversation history for user, assistant, and tool messages.
+    Displays the UI conversation history only (not the LLM summarized memory).
     """
     st.title("Model Bot")
 
@@ -152,7 +176,7 @@ def set_chatbox_layout() -> None:
     if not history:
         return
 
-    for msg in history.messages:
+    for msg in history.display_messages:
         role = msg.get("role")
         content = msg.get("content")
 
@@ -204,34 +228,26 @@ async def process_user_input(
 ) -> None:
     """
     Handles user input, generates LLM responses, and processes tool calls in the chat interface.
-    Ensures robust error handling and user feedback for all major operations.
+    Uses two separate histories:
+    - display history for what the user sees,
+    - LLM history for what is actually sent to the model.
     """
     try:
         if user_input is None:
             return
 
-        skip_user_echo = _consume_skip_user_echo_flag()
+        history: ChatHistory = st.session_state["history"]
 
+        skip_user_echo = _consume_skip_user_echo_flag()
         if not skip_user_echo:
             with st.chat_message("user"):
                 st.write(user_input)
 
+        history.start_new_request(user_input)
+        history.add_user_message(user_input)
+
         model = st.session_state.get("model", {})
-        model_prompt = ""
-        if model and "elements" in model:
-            model_prompt = "\n".join([
-                "[USER.MODEL]",
-                str(shorten_json(model)),
-                "[USER.INPUT]",
-                "",
-            ])
-        elif model and "ttl" in model:
-            model_prompt = "\n".join([
-                "[USER.MODEL]",
-                str(model["ttl"]),
-                "[USER.INPUT]",
-                "",
-            ])
+        model_prompt = _build_current_model_prompt(model)
 
         async with st.session_state["mcp_client"] as mcp_client:
             tools = await with_timeout(
@@ -242,22 +258,20 @@ async def process_user_input(
             if tools is None:
                 return
 
-        user_message = ChatCompletionUserMessageParam(
-            role="user",
-            content=f"{model_prompt}{user_input}",
-        )
-        history: ChatHistory = st.session_state["history"]
-        history.messages.append(user_message)
-
         completions: AsyncCompletions = st.session_state["completions"]
         completion_params = st.session_state.get("completion_params", {})
 
         loop = True
         while loop:
             try:
+                llm_messages = history.build_messages_for_llm(
+                    current_user_input=user_input,
+                    current_model_prompt=model_prompt,
+                )
+
                 response: ChatCompletion = await with_timeout(
                     completions.create(
-                        messages=history.messages,
+                        messages=llm_messages,
                         tools=tools,
                         tool_choice="auto",
                         model=str(environ["LLM_MODEL"]),
@@ -270,6 +284,7 @@ async def process_user_input(
                 )
                 if response is None:
                     return
+
             except Exception as e:
                 show_user_error(
                     "A critical error occurred while generating the assistant response.",
@@ -303,15 +318,19 @@ async def process_user_input(
                         for tool_call in message.tool_calls
                     ]
 
-                    history.add_assistant_message(content=content, tool_calls=tool_calls)
+                    history.add_assistant_message(
+                        content=content,
+                        tool_calls=tool_calls,
+                    )
 
                     for tool_call in tool_calls:
                         function = tool_call["function"]
                         name = function["name"]
+                        raw_arguments_text = function.get("arguments", "{}")
 
                         try:
-                            args = safe_json_loads(function["arguments"])
-                            if args is None:
+                            args = safe_json_loads(raw_arguments_text)
+                            if not isinstance(args, dict):
                                 args = {}
 
                             async with st.session_state["mcp_client"] as mcp_client:
@@ -322,6 +341,7 @@ async def process_user_input(
                                 )
                                 if tool_message is None:
                                     return
+
                         except Exception as e:
                             show_user_error(
                                 f"A critical error occurred while calling tool '{name}'.",
@@ -337,8 +357,12 @@ async def process_user_input(
                             parsed_tool = safe_json_loads(tool_message)
 
                             history.add_tool_message(
-                                content=tool_message,
+                                content=tool_message,          # exact UI content
                                 tool_call_id=tool_call["id"],
+                                llm_content=tool_message,      # exact raw tool output for current request
+                                tool_name=name,
+                                arguments=args,
+                                raw_arguments_text=raw_arguments_text,
                             )
 
                             if on_model_mutation is not None:
@@ -371,7 +395,6 @@ async def process_user_input(
                                     return
 
                                 loop = False
-
                         except Exception as e:
                             show_user_error(
                                 f"A critical error occurred while processing tool output for '{name}'.",
@@ -380,6 +403,7 @@ async def process_user_input(
                             with st.chat_message("assistant"):
                                 st.write(f"⚠️ Tool output processing error for '{name}': {e}")
                             return
+
                 else:
                     history.add_assistant_message(content)
                     loop = False
@@ -393,7 +417,6 @@ async def process_user_input(
                     st.write(f"⚠️ Assistant message processing error: {e}")
                 return
 
-        user_message["content"] = user_input
         try:
             history.save()
         except Exception as e:
