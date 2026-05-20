@@ -113,6 +113,22 @@ def _normalize_int_arg(value: Any, default: int = 10) -> int:
     return default
 
 
+def _normalize_bool_arg(value: Any, default: bool = True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "n", "off"}:
+            return False
+    return default
+
+
 # ----------------------------------------------------------------------
 # UI error helpers
 # ----------------------------------------------------------------------
@@ -409,16 +425,24 @@ class MCPClient:
 
     async def _retrieve_documents(self, payload: dict[str, Any]) -> dict[str, Any]:
         assert self.client is not None, "MCP client not initialized"
-        arguments = payload.get("tool_arguments", {})
 
-        if "search_terms" not in arguments or not arguments["search_terms"]:
+        arguments = payload.get("tool_arguments") or {}
+        if not isinstance(arguments, dict):
+            arguments = {}
+
+        search_terms = arguments.get("search_terms")
+        if not search_terms:
             show_user_error("Missing required argument 'search_terms' for retrieve_documents.")
+            payload["tool_results"] = {}
             return payload
 
         call_args = {
-            "search_terms": arguments["search_terms"],
-            "vocabularies": _normalize_list_arg(arguments.get("vocabularies")),
+            "search_terms": search_terms,
             "limit": _normalize_int_arg(arguments.get("limit"), default=10),
+            "return_full_document": _normalize_bool_arg(
+                arguments.get("return_full_document"),
+                default=True,
+            ),
         }
         payload["tool_arguments"] = call_args
 
@@ -430,9 +454,16 @@ class MCPClient:
 
             content = getattr(result, "content", [])
             if content and getattr(content[0], "type", "") == "text":
-                payload["tool_results"] = safe_json_loads(getattr(content[0], "text", "")) or {}
+                raw_text = getattr(content[0], "text", "") or ""
+                parsed = safe_json_loads(raw_text)
+
+                if parsed is None:
+                    payload["tool_results"] = {"raw": raw_text}
+                else:
+                    payload["tool_results"] = parsed
             else:
                 payload["tool_results"] = {}
+
         except Exception as e:
             logger.exception("_retrieve_documents failed: %s", e)
             show_user_error("Could not retrieve documents.", details=str(e))
@@ -657,7 +688,6 @@ class MCPClient:
         call_args = {
             "user": self.state.get("user"),
             "name": self.state.get("name"),
-            "vocabularies": _normalize_list_arg(arguments.get("vocabularies")),
             "n_documents": _normalize_int_arg(arguments.get("n_documents"), default=10),
             "target_names": target_names if target_names else None,
         }
