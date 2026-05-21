@@ -6,6 +6,8 @@ venv
 venv-windows
 chat_history/logs/**
 chat_history/histories/**
+chat_history/display_histories/**
+chat_history/llm_histories/**
 .vscode
 **/client_config.yaml
 **/.openai_client_config.yaml
