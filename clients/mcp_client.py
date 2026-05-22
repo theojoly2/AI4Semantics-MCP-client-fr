@@ -1,7 +1,22 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from time import time
 
+import asyncio
+import logging
+from contextlib import AsyncExitStack
+from json import loads, dumps
+from os import environ
+from typing import Any, Callable, Mapping, Optional, Set
+
+
+import streamlit as st
+from openai.resources.chat.completions import AsyncCompletions
+from openai.types.chat import ChatCompletionToolParam
+from openai.types.shared_params import FunctionDefinition
+from uuid import uuid4
+
+
+from fastmcp import Client
 
 """
 Streamlit app with robust error handling for FastMCP + OpenAI async completions.
@@ -16,25 +31,6 @@ What users will see on error:
 
 Replace CONTACT_EMAIL with your real support address when ready.
 """
-
-
-import asyncio
-import logging
-from contextlib import AsyncExitStack
-from json import loads, dumps
-from os import environ
-from typing import Any, Callable, Mapping, Optional, Set
-
-
-import streamlit as st
-from openai import AsyncOpenAI
-from openai.resources.chat.completions import AsyncCompletions
-from openai.types.chat import ChatCompletionToolParam
-from openai.types.shared_params import FunctionDefinition
-from uuid import uuid4
-
-
-from fastmcp import Client
 
 
 # ----------------------------------------------------------------------
@@ -292,7 +288,7 @@ class MCPClient:
     }
 
     RESERVED_ARGUMENTS: Set[str] = {
-        "user", "name", "package", "ID",
+        "user", "name", "package", "uri",
     }
 
     def __init__(
@@ -482,11 +478,16 @@ class MCPClient:
             return payload
 
         call_args = {
-            "user": self.state.get("user"),
-            "name": self.state.get("name"),
-            "package": self.state.get("package", ""),
-            "ID": self._generate_id(),
-            **{k: arguments[k] for k in required},
+            "user": _normalize_str_arg(self.state.get("user"), default=""),
+            "name": _normalize_str_arg(self.state.get("name"), default=""),
+            "package": _normalize_str_arg(self.state.get("package", ""), default=""),
+            "uri": _normalize_str_arg(
+                arguments.get("uri"),
+                default="",           # le serveur génère urn:class:{slug} si absent
+            ),
+            "title": _normalize_str_arg(arguments["title"], default=""),
+            "definition": _normalize_str_arg(arguments["definition"], default=""),
+            "usage_note": _normalize_str_arg(arguments["usage_note"], default=""),
         }
         payload["tool_arguments"] = call_args
 
@@ -520,14 +521,17 @@ class MCPClient:
             return payload
 
         call_args = {
-            "user": self.state.get("user"),
-            "name": self.state.get("name"),
-            "class_name": arguments["class_name"],
-            "attr_label": arguments["attr_label"],
-            "attr_definition": arguments["attr_definition"],
-            "attr_uri": arguments["attr_uri"] or f"http://example.com/{arguments['attr_label']}",
-            "attr_usage_note": arguments.get("attr_usage_note", ""),
-            "attr_type": arguments.get("attr_type", ""),
+            "user": _normalize_str_arg(self.state.get("user"), default=""),
+            "name": _normalize_str_arg(self.state.get("name"), default=""),
+            "class_name": _normalize_str_arg(arguments["class_name"], default=""),
+            "attr_label": _normalize_str_arg(arguments["attr_label"], default=""),
+            "attr_definition": _normalize_str_arg(arguments["attr_definition"], default=""),
+            "attr_uri": _normalize_str_arg(
+                arguments.get("attr_uri"),
+                default=f"http://example.com/{_normalize_str_arg(arguments.get('attr_label'), default='attribute')}",
+            ),
+            "attr_usage_note": _normalize_str_arg(arguments.get("attr_usage_note"), default=""),
+            "attr_type": _normalize_str_arg(arguments.get("attr_type"), default=""),
         }
         payload["tool_arguments"] = call_args
 
@@ -613,8 +617,8 @@ class MCPClient:
             return payload
 
         call_args = {
-            "user": self.state.get("user") or "",
-            "name": self.state.get("name") or "",
+            "user": _normalize_str_arg(self.state.get("user"), default=""),
+            "name": _normalize_str_arg(self.state.get("name"), default=""),
             "user_question": arguments["user_question"],
             "allowed_executor_tools": sorted(list(self.EXPOSED_TOOLS)),
             "observations": arguments.get("observations") or [],
@@ -646,8 +650,8 @@ class MCPClient:
         arguments = payload.get("tool_arguments", {})
 
         call_args = {
-            "user": self.state.get("user"),
-            "name": self.state.get("name"),
+            "user": _normalize_str_arg(self.state.get("user"), default=""),
+            "name": _normalize_str_arg(self.state.get("name"), default=""),
             "target_names": _normalize_list_arg(arguments.get("target_names")),
             "check_instruction": _normalize_str_arg(arguments.get("check_instruction"), default=""),
         }
@@ -686,8 +690,8 @@ class MCPClient:
         target_names = _normalize_list_arg(arguments.get("target_names"))
 
         call_args = {
-            "user": self.state.get("user"),
-            "name": self.state.get("name"),
+            "user": _normalize_str_arg(self.state.get("user"), default=""),
+            "name": _normalize_str_arg(self.state.get("name"), default=""),
             "n_documents": _normalize_int_arg(arguments.get("n_documents"), default=10),
             "target_names": target_names if target_names else None,
         }
@@ -722,8 +726,8 @@ class MCPClient:
         arguments = payload.get("tool_arguments", {})
 
         call_args = {
-            "user": self.state.get("user"),
-            "name": self.state.get("name"),
+            "user": _normalize_str_arg(self.state.get("user"), default=""),
+            "name": _normalize_str_arg(self.state.get("name"), default=""),
             "validation_server": arguments.get(
                 "validation_server",
                 "https://www.itb.ec.europa.eu/shacl/semicstyleguide/api/validate",
