@@ -399,7 +399,9 @@ class MCPClient:
 
         try:
             if name not in MCPClient.EXPOSED_TOOLS:
-                raise ValueError(f"Tool '{name}' is not exposed. Allowed: {MCPClient.EXPOSED_TOOLS}")
+                raise ValueError(
+                    f"Tool '{name}' is not exposed. Allowed: {MCPClient.EXPOSED_TOOLS}"
+                )
 
             tool_func: Optional[Callable[[dict[str, Any]], Any]] = getattr(self, f"_{name}", None)
             if not callable(tool_func):
@@ -528,7 +530,8 @@ class MCPClient:
             "attr_definition": _normalize_str_arg(arguments["attr_definition"], default=""),
             "attr_uri": _normalize_str_arg(
                 arguments.get("attr_uri"),
-                default=f"http://example.com/{_normalize_str_arg(arguments.get('attr_label'), default='attribute')}",
+                default=f"http://example.com/{_normalize_str_arg(arguments.get('attr_label'),
+                                                                 default='attribute')}",
             ),
             "attr_usage_note": _normalize_str_arg(arguments.get("attr_usage_note"), default=""),
             "attr_type": _normalize_str_arg(arguments.get("attr_type"), default=""),
@@ -558,7 +561,8 @@ class MCPClient:
         assert self.client is not None, "MCP client not initialized"
         arguments = payload.get("tool_arguments", {})
 
-        required = {"source_name", "target_name", "rel_label", "rel_definition", "rel_uri", "relationship"}
+        required = {"source_name", "target_name", "rel_label", "rel_definition", "rel_uri",
+                    "relationship"}
         missing = [arg for arg in required if arg not in arguments or not arguments[arg]]
         if missing:
             show_user_error(f"Missing required arguments for add_connector: {missing}.")
@@ -573,9 +577,11 @@ class MCPClient:
             "rel_definition": _normalize_str_arg(arguments.get("rel_definition"), default=""),
             "rel_uri": _normalize_str_arg(
                 arguments.get("rel_uri"),
-                default=f"http://example.com/{_normalize_str_arg(arguments.get('rel_label'), default='relation')}",
+                default=f"http://example.com/{_normalize_str_arg(arguments.get('rel_label'),
+                                                                 default='relation')}",
             ),
-            "relationship": _normalize_str_arg(arguments.get("relationship"), default="Association"),
+            "relationship": _normalize_str_arg(arguments.get("relationship"),
+                                               default="Association"),
 
             # cardinalités
             "lb": _normalize_str_arg(arguments.get("lb"), default=""),
@@ -765,14 +771,16 @@ class MCPClient:
         assert self.client is not None, "MCP client not initialized"
         arguments = payload.get("tool_arguments", {})
 
-        validator_check = self.tool_results.get("validator_check") or arguments.get("validator_check", {})
-        metadata_checks = self.tool_results.get("metadata_checker") or arguments.get("metadata_checker", {})
-        reuse_checks    = self.tool_results.get("reuse_check")      or arguments.get("reuse_check", {})
+        validator_check = self.tool_results.get("validator_check") or\
+            arguments.get("validator_check", {})
+        metadata_checks = self.tool_results.get("metadata_checker") or\
+            arguments.get("metadata_checker", {})
+        reuse_checks = self.tool_results.get("reuse_check") or arguments.get("reuse_check", {})
 
         call_args = {
             "validator_check": validator_check or {},
             "metadata_checks": metadata_checks or {},
-            "reuse_checks":    reuse_checks    or {},
+            "reuse_checks": reuse_checks or {},
         }
         payload["tool_arguments"] = call_args
 
