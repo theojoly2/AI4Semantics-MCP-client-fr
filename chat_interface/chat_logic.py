@@ -1,29 +1,24 @@
 from __future__ import annotations
 
-
 # Standard library imports
+from collections import defaultdict
 from typing import Optional, Any, Callable, Awaitable
 import asyncio
 import logging
 from json import loads
 from os import environ
 
-
 # Third-party imports
 import streamlit as st
 
-
 # OpenAI and local application imports
 from openai.types.chat import (
-    ChatCompletion,
-    ChatCompletionMessage,
+    ChatCompletionMessageParam,
     ChatCompletionMessageToolCallParam,
 )
 from openai.resources.chat.completions import AsyncCompletions
-from clients import MCPClient
 from chat_history import ChatHistory
 from .data_model_utils.chat_data_structure import shorten_json
-
 
 # ----------------------------------------------------------------------
 # Config & logging
@@ -37,7 +32,6 @@ if not logger.handlers:
     _h.setLevel(logging.INFO)
     _h.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s"))
     logger.addHandler(_h)
-
 
 # ----------------------------------------------------------------------
 # UI helpers
@@ -162,6 +156,166 @@ def _build_current_model_prompt(model: Any) -> str:
     return ""
 
 
+def _extract_delta_content(delta: Any) -> str:
+    content = getattr(delta, "content", None)
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    text_value = item.get("text")
+                    if isinstance(text_value, str):
+                        parts.append(text_value)
+                    elif isinstance(text_value, dict):
+                        value = text_value.get("value")
+                        if isinstance(value, str):
+                            parts.append(value)
+                continue
+
+            item_text = getattr(item, "text", None)
+            if isinstance(item_text, str):
+                parts.append(item_text)
+            else:
+                value = getattr(item_text, "value", None)
+                if isinstance(value, str):
+                    parts.append(value)
+
+        return "".join(parts)
+
+    return ""
+
+
+def _normalize_tool_calls(raw_tool_calls: Any) -> list[ChatCompletionMessageToolCallParam]:
+    normalized: list[ChatCompletionMessageToolCallParam] = []
+
+    for tool_call in raw_tool_calls or []:
+        if isinstance(tool_call, dict):
+            tool_call_id = str(tool_call.get("id") or "")
+            function = tool_call.get("function") or {}
+            function_name = str(function.get("name") or "")
+            function_arguments = str(function.get("arguments") or "{}")
+        else:
+            tool_call_id = str(getattr(tool_call, "id", "") or "")
+            function = getattr(tool_call, "function", None)
+            function_name = str(getattr(function, "name", "") or "")
+            function_arguments = str(getattr(function, "arguments", "{}") or "{}")
+
+        if not function_name:
+            continue
+
+        normalized.append(
+            ChatCompletionMessageToolCallParam(
+                id=tool_call_id,
+                type="function",
+                function={
+                    "name": function_name,
+                    "arguments": function_arguments,
+                },
+            )
+        )
+
+    return normalized
+
+
+async def _create_completion_streaming(
+    completions: AsyncCompletions,
+    llm_messages: list[ChatCompletionMessageParam],
+    tools: list[Any],
+    completion_params: dict[str, Any],
+) -> dict[str, Any]:
+    stream = await completions.create(
+        messages=llm_messages,
+        tools=tools,
+        tool_choice="auto",
+        model=str(environ["LLM_MODEL"]),
+        temperature=0,
+        stream=True,
+        extra_body=completion_params.get("extra_body"),
+    )
+
+    assistant_text = ""
+    text_placeholder = None
+    streamed_any_text = False
+
+    tool_calls_buffer: dict[int, dict[str, Any]] = defaultdict(
+        lambda: {
+            "id": "",
+            "type": "function",
+            "function": {"name": "", "arguments": ""},
+        }
+    )
+
+    async for chunk in stream:
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            continue
+
+        choice = choices[0]
+        delta = getattr(choice, "delta", None)
+        if delta is None:
+            continue
+
+        text_piece = _extract_delta_content(delta)
+        if text_piece:
+            assistant_text += text_piece
+            if text_placeholder is None:
+                with st.chat_message("assistant"):
+                    text_placeholder = st.empty()
+            text_placeholder.markdown(assistant_text)
+            streamed_any_text = True
+
+        delta_tool_calls = getattr(delta, "tool_calls", None) or []
+        for tc in delta_tool_calls:
+            idx = getattr(tc, "index", 0) or 0
+            entry = tool_calls_buffer[idx]
+
+            tc_id = getattr(tc, "id", None)
+            if tc_id:
+                entry["id"] = tc_id
+
+            tc_type = getattr(tc, "type", None)
+            if tc_type:
+                entry["type"] = tc_type
+
+            function = getattr(tc, "function", None)
+            if function is not None:
+                fname = getattr(function, "name", None)
+                fargs = getattr(function, "arguments", None)
+
+                if fname:
+                    entry["function"]["name"] += fname
+                if fargs:
+                    entry["function"]["arguments"] += fargs
+
+    tool_calls: list[ChatCompletionMessageToolCallParam] = []
+    for idx in sorted(tool_calls_buffer.keys()):
+        entry = tool_calls_buffer[idx]
+        if entry["function"]["name"]:
+            tool_calls.append(
+                ChatCompletionMessageToolCallParam(
+                    id=entry["id"] or f"tool_call_{idx}",
+                    type="function",
+                    function={
+                        "name": entry["function"]["name"],
+                        "arguments": entry["function"]["arguments"] or "{}",
+                    },
+                )
+            )
+
+    return {
+        "content": assistant_text,
+        "tool_calls": tool_calls,
+        "streamed_any_text": streamed_any_text,
+    }
+
 # ----------------------------------------------------------------------
 # Layout
 # ----------------------------------------------------------------------
@@ -218,7 +372,6 @@ def set_chatbox_layout() -> None:
         unsafe_allow_html=True,
     )
 
-
 # ----------------------------------------------------------------------
 # Chat processing
 # ----------------------------------------------------------------------
@@ -269,20 +422,17 @@ async def process_user_input(
                     current_model_prompt=model_prompt,
                 )
 
-                response: ChatCompletion = await with_timeout(
-                    completions.create(
-                        messages=llm_messages,
+                streamed_response = await with_timeout(
+                    _create_completion_streaming(
+                        completions=completions,
+                        llm_messages=llm_messages,
                         tools=tools,
-                        tool_choice="auto",
-                        model=str(environ["LLM_MODEL"]),
-                        temperature=0,
-                        stream=False,
-                        extra_body=completion_params.get("extra_body"),
+                        completion_params=completion_params,
                     ),
                     seconds=3000.0,
                     on_timeout_msg="Generating assistant response took too long.",
                 )
-                if response is None:
+                if streamed_response is None:
                     return
 
             except Exception as e:
@@ -298,26 +448,15 @@ async def process_user_input(
                 return
 
             try:
-                message: ChatCompletionMessage = response.choices[0].message
-                content = message.content or ""
+                content = streamed_response.get("content", "") or ""
+                tool_calls = _normalize_tool_calls(streamed_response.get("tool_calls", []))
+                streamed_any_text = bool(streamed_response.get("streamed_any_text", False))
 
-                if content:
+                if content and not streamed_any_text:
                     with st.chat_message("assistant"):
                         st.write(content)
 
-                if message.tool_calls:
-                    tool_calls: list[ChatCompletionMessageToolCallParam] = [
-                        ChatCompletionMessageToolCallParam(
-                            id=tool_call.id,
-                            type="function",
-                            function={
-                                "name": tool_call.function.name,
-                                "arguments": tool_call.function.arguments,
-                            },
-                        )
-                        for tool_call in message.tool_calls
-                    ]
-
+                if tool_calls:
                     history.add_assistant_message(
                         content=content,
                         tool_calls=tool_calls,
@@ -357,9 +496,9 @@ async def process_user_input(
                             parsed_tool = safe_json_loads(tool_message)
 
                             history.add_tool_message(
-                                content=tool_message,          # exact UI content
+                                content=tool_message,
                                 tool_call_id=tool_call["id"],
-                                llm_content=tool_message,      # exact raw tool output for current request
+                                llm_content=tool_message,
                                 tool_name=name,
                                 arguments=args,
                                 raw_arguments_text=raw_arguments_text,
