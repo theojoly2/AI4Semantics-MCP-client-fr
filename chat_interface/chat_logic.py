@@ -1,4 +1,5 @@
 from __future__ import annotations
+import time
 
 # Standard library imports
 from collections import defaultdict
@@ -242,8 +243,11 @@ async def _create_completion_streaming(
     )
 
     assistant_text = ""
+    pending_text = ""
     text_placeholder = None
     streamed_any_text = False
+    last_flush = 0.0
+    flush_interval = 0.03  # 30 ms
 
     tool_calls_buffer: dict[int, dict[str, Any]] = defaultdict(
         lambda: {
@@ -265,12 +269,26 @@ async def _create_completion_streaming(
 
         text_piece = _extract_delta_content(delta)
         if text_piece:
-            assistant_text += text_piece
-            if text_placeholder is None:
-                with st.chat_message("assistant"):
-                    text_placeholder = st.empty()
-            text_placeholder.markdown(assistant_text)
-            streamed_any_text = True
+            pending_text += text_piece
+
+            now = time.perf_counter()
+            should_flush = (
+                (now - last_flush) >= flush_interval
+                or text_piece.endswith((" ", "\n", ".", ",", ":", ";", "!", "?"))
+                or len(pending_text) >= 40
+            )
+
+            if should_flush:
+                assistant_text += pending_text
+                pending_text = ""
+
+                if text_placeholder is None:
+                    with st.chat_message("assistant"):
+                        text_placeholder = st.empty()
+
+                text_placeholder.markdown(assistant_text)
+                streamed_any_text = True
+                last_flush = now
 
         delta_tool_calls = getattr(delta, "tool_calls", None) or []
         for tc in delta_tool_calls:
@@ -295,6 +313,13 @@ async def _create_completion_streaming(
                 if fargs:
                     entry["function"]["arguments"] += fargs
 
+    if pending_text:
+        assistant_text += pending_text
+        pending_text = ""
+
+    if text_placeholder is not None:
+        text_placeholder.markdown(assistant_text)
+
     tool_calls: list[ChatCompletionMessageToolCallParam] = []
     for idx in sorted(tool_calls_buffer.keys()):
         entry = tool_calls_buffer[idx]
@@ -315,6 +340,7 @@ async def _create_completion_streaming(
         "tool_calls": tool_calls,
         "streamed_any_text": streamed_any_text,
     }
+
 
 # ----------------------------------------------------------------------
 # Layout
