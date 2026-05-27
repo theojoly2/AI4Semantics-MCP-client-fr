@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 from copy import deepcopy
 from typing import (
     Iterator,
@@ -60,7 +61,6 @@ class ChatHistory:
         self.system_messages: list[ChatCompletionMessageParam] = (
             list(system_messages) if system_messages else []
         )
-
         self.conversation_summary: list[str] = (
             list(conversation_summary) if conversation_summary else []
         )
@@ -177,10 +177,7 @@ class ChatHistory:
             )
         )
 
-    def __iadd__(
-        self,
-        other,
-    ):
+    def __iadd__(self, other):
         self.display_messages.extend(other.display_messages)
         self.system_messages.extend(other.system_messages)
         self.conversation_summary.extend(other.conversation_summary)
@@ -194,18 +191,11 @@ class ChatHistory:
         track_trace: bool = False,
     ) -> None:
         self.display_messages.append(
-            ChatCompletionUserMessageParam(
-                role="user",
-                content=content,
-            )
+            ChatCompletionUserMessageParam(role="user", content=content)
         )
-
         if track_trace:
             self.current_request_trace.append(
-                {
-                    "type": "user_message",
-                    "content": content,
-                }
+                {"type": "user_message", "content": content}
             )
 
     def add_assistant_message(
@@ -215,11 +205,7 @@ class ChatHistory:
         add_to_llm_request: bool = True,
         track_trace: bool = True,
     ) -> None:
-        message = ChatCompletionAssistantMessageParam(
-            role="assistant",
-            content=content,
-        )
-
+        message = ChatCompletionAssistantMessageParam(role="assistant", content=content)
         if tool_calls:
             message["tool_calls"] = tool_calls
 
@@ -248,10 +234,7 @@ class ChatHistory:
             )
         else:
             self.current_request_trace.append(
-                {
-                    "type": "assistant_message",
-                    "content": content,
-                }
+                {"type": "assistant_message", "content": content}
             )
 
     def summarize_tool_content(
@@ -260,38 +243,31 @@ class ChatHistory:
         tool_name: str = "",
     ) -> str:
         parsed = self._safe_json_loads(content)
-        name = tool_name or "tool_call"
+        name = tool_name or "retrieve_documents"
 
-        if isinstance(parsed, dict):
-            effective_name = str(parsed.get("tool_name") or name)
-            tool_results = parsed.get("tool_results")
+        results = parsed
+        if isinstance(parsed, dict) and "tool_results" in parsed:
+            results = parsed["tool_results"]
 
-            if isinstance(tool_results, dict):
-                keys = [str(k) for k in tool_results.keys()]
-                if "report" in tool_results and tool_results.get("report"):
-                    return (
-                        f"{effective_name} | report="
-                        f"{self._truncate(tool_results.get('report', ''), 500)}"
-                    )
-                if keys:
-                    return (
-                        f"{effective_name} | tool_results.keys="
-                        f"{', '.join(keys[:10])}"
-                    )
+        if not isinstance(results, list):
+            return f"{name} | preview={self._truncate(content, 500)}"
 
-            if isinstance(tool_results, list):
-                return f"{effective_name} | tool_results.count={len(tool_results)}"
+        filenames: list[str] = []
 
-            keys = [str(k) for k in parsed.keys()]
-            if keys:
-                return f"{effective_name} | keys={', '.join(keys[:10])}"
+        for item in results:
+            if isinstance(item, (list, tuple)) and len(item) >= 1:
+                filename = item[0]
+                if isinstance(filename, str) and filename.strip():
+                    filenames.append(filename.strip())
+            elif isinstance(item, dict):
+                filename = item.get("filename")
+                if isinstance(filename, str) and filename.strip():
+                    filenames.append(filename.strip())
 
-            return f"{effective_name} | empty_object"
+        if not filenames:
+            return f"{name} | results.count={len(results)}"
 
-        if isinstance(parsed, list):
-            return f"{name} | list.count={len(parsed)}"
-
-        return f"{name} | preview={self._truncate(content, 500)}"
+        return f"{name} | documents=[{', '.join(filenames)}]"
 
     def add_tool_message(
         self,
@@ -304,20 +280,29 @@ class ChatHistory:
         add_to_llm_request: bool = True,
         track_trace: bool = True,
     ) -> None:
-        display_message = ChatCompletionToolMessageParam(
-            role="tool",
-            content=content,
-            tool_call_id=tool_call_id,
-        )
-        self.display_messages.append(display_message)
-
-        if add_to_llm_request:
-            llm_message = ChatCompletionToolMessageParam(
+        self.display_messages.append(
+            ChatCompletionToolMessageParam(
                 role="tool",
-                content=llm_content if llm_content is not None else content,
+                content=content,
                 tool_call_id=tool_call_id,
             )
-            self.current_request_llm_messages.append(deepcopy(llm_message))
+        )
+
+        if add_to_llm_request:
+            # All tool results are kept in full during the current turn so the
+            # LLM has complete context for multi-step reasoning (plan execution,
+            # validation, completeness checks, etc.).
+            # They are discarded at turn boundary via finalize_current_request_summary;
+            # only conversation_summary (short traces) survives to the next turn.
+            self.current_request_llm_messages.append(
+                deepcopy(
+                    ChatCompletionToolMessageParam(
+                        role="tool",
+                        content=llm_content if llm_content is not None else content,
+                        tool_call_id=tool_call_id,
+                    )
+                )
+            )
 
         if track_trace:
             self.current_request_trace.append(
@@ -360,7 +345,6 @@ class ChatHistory:
                         f"{step_index}. Assistant intent before tool call(s): {content}"
                     )
                     step_index += 1
-
                 for call in step.get("tool_calls", []):
                     lines.append(
                         f"{step_index}. Tool call prepared: "
@@ -398,6 +382,8 @@ class ChatHistory:
             self.conversation_summary.append("\n".join(lines))
             self.conversation_summary = self.conversation_summary[-20:]
 
+        # Discard full tool results — only conversation_summary (short traces)
+        # survives to the next turn.
         self.current_request_user_input = ""
         self.current_request_trace = []
         self.current_request_llm_messages = []
@@ -431,20 +417,16 @@ class ChatHistory:
             if current_model_prompt
             else current_user_input
         )
-
         llm_messages.append(
-            ChatCompletionUserMessageParam(
-                role="user",
-                content=user_content,
-            )
+            ChatCompletionUserMessageParam(role="user", content=user_content)
         )
 
+        # All current-turn tool exchanges in full — discarded at turn boundary
+        # by finalize_current_request_summary.
         llm_messages.extend(deepcopy(self.current_request_llm_messages))
         return llm_messages
 
-    def save(
-        self,
-    ) -> None:
+    def save(self) -> None:
         if not self.user or not self.name:
             return
 
@@ -453,20 +435,15 @@ class ChatHistory:
         makedirs(display_dp, exist_ok=True)
         makedirs(llm_dp, exist_ok=True)
 
-        display_fp = f"{display_dp}/{self.name}.json"
-        llm_fp = f"{llm_dp}/{self.name}.json"
-
-        with open(display_fp, "w", encoding="utf-8") as file:
+        with open(f"{display_dp}/{self.name}.json", "w", encoding="utf-8") as file:
             dump(
-                {
-                    "display_messages": self.display_messages,
-                },
+                {"display_messages": self.display_messages},
                 file,
                 ensure_ascii=False,
                 indent=2,
             )
 
-        with open(llm_fp, "w", encoding="utf-8") as file:
+        with open(f"{llm_dp}/{self.name}.json", "w", encoding="utf-8") as file:
             dump(
                 {
                     "system_messages": self.system_messages,
@@ -480,10 +457,7 @@ class ChatHistory:
                 indent=2,
             )
 
-    def load(
-        self,
-        name: str = "",
-    ) -> None:
+    def load(self, name: str = "") -> None:
         if not self.user or not name:
             return
 
