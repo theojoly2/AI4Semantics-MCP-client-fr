@@ -179,9 +179,9 @@ def get_image_bytes(
             plantuml_lines.append(f'class "{_escape_display(target_name)}" as {target_alias}')
             placeholders.add(target_alias)
 
-        # Cardinalités : uniquement depuis lt / rt
-        left_card = _safe_text(connector.get("lt"))
-        right_card = _safe_text(connector.get("rt"))
+        # Cardinalités : uniquement depuis lb / rb
+        left_card = _safe_text(connector.get("ld"))
+        right_card = _safe_text(connector.get("rd"))
 
         # Nom de relation au centre, pour ne pas bloquer l'affichage des cardinalités
         center_label = _get_center_label(connector)

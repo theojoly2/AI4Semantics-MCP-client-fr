@@ -161,7 +161,7 @@ Si le tour précédent contenait une demande d'URI et que le message utilisateur
 
   - add_connector :
       reluri, rellabel, relationship, sourcename, targetname,
-      lb, rb, lt, rt, reldefinition, relusagenote
+      lb (cardinalité), rb (cardinalité), lt (roles), rt (roles), reldefinition, relusagenote
 
   Si un champ est absent du plan ou du modèle utilisateur → passer une
   chaîne vide ou null, jamais omettre l'argument.
