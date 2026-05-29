@@ -205,14 +205,10 @@ def _build_ttl_bytes(json_data: dict[str, Any]) -> bytes:
 
 
 def _build_xmi_bytes(json_data: dict[str, Any]) -> bytes:
-    """
-    Build XMI/XML bytes from a model if possible.
-    Preference:
-    1) json_data['xmi']
-    2) json_data itself if it already looks like an XMI-like JSON model
-    """
+    model_name = _get_model_name("UML_Model")
+
     if isinstance(json_data.get("xmi"), dict):
-        export_source = json_data["xmi"]
+        export_source = dict(json_data["xmi"])
     elif "elements" in json_data or "connectors" in json_data:
         export_source = {
             "elements": json_data.get("elements", []),
@@ -224,6 +220,8 @@ def _build_xmi_bytes(json_data: dict[str, Any]) -> bytes:
             list(json_data.keys()),
         )
         return b""
+
+    export_source.setdefault("model_name", model_name)
 
     bytes_data = json_to_xml(export_source)
     if isinstance(bytes_data, str):
