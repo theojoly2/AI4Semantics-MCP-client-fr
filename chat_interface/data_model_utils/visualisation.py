@@ -180,8 +180,8 @@ def get_image_bytes(
             placeholders.add(target_alias)
 
         # Cardinalités : uniquement depuis lb / rb
-        left_card = _safe_text(connector.get("ld"))
-        right_card = _safe_text(connector.get("rd"))
+        left_card = _safe_text(connector.get("lb"))
+        right_card = _safe_text(connector.get("rb"))
 
         # Nom de relation au centre, pour ne pas bloquer l'affichage des cardinalités
         center_label = _get_center_label(connector)
