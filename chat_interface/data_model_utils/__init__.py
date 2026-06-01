@@ -300,6 +300,8 @@ async def upload_xml(uploaded_file: BytesIO) -> dict[str, Any]:
                 return {}
 
             json_data["source_format"] = "xmi"
+            json_data["xmi_raw"] = file_bytes.decode("utf-8", errors="replace")
+            json_data["xmi_xml"] = json_data["xmi_raw"]
 
         else:  # kind == "ttl"
             try:

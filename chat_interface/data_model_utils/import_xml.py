@@ -4,13 +4,16 @@ from collections import defaultdict
 from typing import Any, Optional
 from xml.etree.ElementTree import Element, parse, iterparse
 import io
+import re
 
 
 DEFAULT_XMI_NS = "{http://schema.omg.org/spec/XMI/2.1}"
 DEFAULT_UML_NS = "{http://schema.omg.org/spec/UML/2.1}"
 
+
 NS_XMI = DEFAULT_XMI_NS
 NS_UML = DEFAULT_UML_NS
+
 
 _PARENT_MAP: dict[Element, Element] = {}
 
@@ -127,6 +130,60 @@ def _tag_value(tags: list[dict[str, Any]] | None, name: str) -> str:
         if (tag.get("name") or "").strip() == name:
             return (tag.get("value") or "").strip()
     return ""
+
+
+def _parse_semantic_body(text: str) -> list[dict[str, str]]:
+    text = (text or "").strip()
+    if not text:
+        return []
+
+    mapping = {
+        "uri": "uri",
+        "label": "label-en",
+        "definition": "definition-en",
+        "usage note": "usageNote-en",
+        "usage_note": "usageNote-en",
+        "usagenote": "usageNote-en",
+        "referenced": "referenced",
+        "connector id": "connector_id",
+        "connector_id": "connector_id",
+    }
+
+    tags: list[dict[str, str]] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        norm_key = key.strip().lower()
+        norm_key = re.sub(r"\s+", " ", norm_key)
+        norm_key = mapping.get(norm_key, "")
+        if not norm_key:
+            continue
+        clean_value = value.strip()
+        md_link = re.match(r"^\[([^\]]+)\]\(([^)]+)\)$", clean_value)
+        if md_link and norm_key in {"uri", "label-en"}:
+            clean_value = md_link.group(2) if norm_key == "uri" else md_link.group(1)
+        tags.append({"name": norm_key, "value": clean_value})
+    return tags
+
+
+def _comment_tags(elem: Optional[Element]) -> list[dict[str, str]]:
+    if elem is None:
+        return []
+    comments = _children(elem, "ownedComment")
+    merged: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for comment in comments:
+        body = _child(comment, "body")
+        body_text = (body.text if body is not None else "") or ""
+        for tag in _parse_semantic_body(body_text):
+            key = (tag["name"], tag["value"])
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(tag)
+    return merged
 
 
 def _connector_name(
@@ -296,7 +353,7 @@ def _extract_standard_attribute(attribute: Element) -> Optional[dict[str, Any]]:
         "type": attr_type,
         "lower_bounds": _attr(_child(attribute, "lowerValue"), "value"),
         "upper_bounds": _attr(_child(attribute, "upperValue"), "value"),
-        "tags_attribute": [],
+        "tags_attribute": _comment_tags(attribute),
     }
 
 
@@ -390,7 +447,7 @@ def _extract_uml_package(elem: Element) -> dict[str, Any]:
         "type": _attr(elem, f"{NS_XMI}type") or "uml:Package",
         "visibility": _attr(elem, "visibility") or "public",
         "package": _find_parent_package_id(elem),
-        "tags": [],
+        "tags": _comment_tags(elem),
     }
 
 
@@ -402,7 +459,7 @@ def _extract_uml_class(elem: Element) -> dict[str, Any]:
         "visibility": _attr(elem, "visibility") or "public",
         "package": _find_parent_package_id(elem),
         "attributes": [],
-        "tags": [],
+        "tags": _comment_tags(elem),
     }
 
     for attr in _children(elem, "ownedAttribute"):
@@ -427,7 +484,7 @@ def _extract_uml_enumeration(elem: Element) -> dict[str, Any]:
         "visibility": _attr(elem, "visibility") or "public",
         "package": _find_parent_package_id(elem),
         "categories": [],
-        "tags": [],
+        "tags": _comment_tags(elem),
     }
 
     for literal in _children(elem, "ownedLiteral"):
@@ -606,21 +663,35 @@ def _get_standard_association_connector(
         elements_by_name=elements_by_name,
     )
 
+    assoc_tags = _comment_tags(assoc)
+    connector_id = _tag_value(assoc_tags, "connector_id")
+    relation_name = _tag_value(assoc_tags, "label-en") or _attr(assoc, "name") or ""
+    relation_uri = _tag_value(assoc_tags, "uri")
+
+    tags = []
+    if connector_id:
+        tags.append({"name": "connector_id", "value": connector_id})
+
+    target_tags = list(assoc_tags)
+    if connector_id and not _tag_value(target_tags, "connector_id"):
+        target_tags.append({"name": "connector_id", "value": connector_id})
+
     return {
+        "connector_id": connector_id,
         "source_id": source_id,
         "target_id": target_id,
         "source_name": source_name,
         "target_name": target_name,
         "relationship": _association_relationship(assoc, end_1, end_2),
-        "name": _attr(assoc, "name") or "",
-        "uri": "",
+        "name": relation_name,
+        "uri": relation_uri,
         "lb": _extract_multiplicity(end_1),
         "lt": _attr(end_1, "name") or "",
         "rb": _extract_multiplicity(end_2),
         "rt": _attr(end_2, "name") or "",
-        "tags": [],
+        "tags": tags,
         "tags_source": [],
-        "tags_target": [],
+        "tags_target": target_tags,
     }
 
 
