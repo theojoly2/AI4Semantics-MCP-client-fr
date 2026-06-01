@@ -34,6 +34,7 @@ if not logger.handlers:
     _h.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s"))
     logger.addHandler(_h)
 
+
 # ----------------------------------------------------------------------
 # UI helpers
 # ----------------------------------------------------------------------
@@ -398,6 +399,7 @@ def set_chatbox_layout() -> None:
         unsafe_allow_html=True,
     )
 
+
 # ----------------------------------------------------------------------
 # Chat processing
 # ----------------------------------------------------------------------
@@ -584,6 +586,7 @@ async def process_user_input(
 
         try:
             history.save()
+            st.rerun()
         except Exception as e:
             show_user_error("Saving the conversation failed.", details=str(e))
             with st.chat_message("assistant"):

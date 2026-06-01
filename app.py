@@ -59,7 +59,7 @@ tab1, *_ = st.tabs(["Data Model chat"])
 
 with tab1:
     try:
-        asyncio_run(data_modelling_chat_tab(server=SERVER))
+        data_modelling_chat_tab(server=SERVER)
     except Exception as e:
         try:
             with st.status("The UI encountered an unexpected error.", expanded=True, state="error") as status:

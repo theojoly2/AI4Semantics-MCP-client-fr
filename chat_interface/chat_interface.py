@@ -6,6 +6,7 @@ import asyncio
 import logging
 from os import environ
 import uuid
+from json import loads
 
 import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
@@ -83,7 +84,6 @@ def safe_json_loads(text: Optional[str]) -> dict:
     if not text:
         return {}
     try:
-        from json import loads
         return loads(text)
     except Exception as e:
         logger.exception("JSON parsing failed: %s", e)
@@ -299,17 +299,32 @@ def _init_state(server: str) -> ChatHistory:
     st.session_state.setdefault("_suppress_user_echo_once", False)
     st.session_state.setdefault("_model_render_prefix", _new_model_render_prefix())
 
+    if "mcp_client" not in st.session_state:
+        # 1. Instanciation du client
+        logger.info("Instanciation du MCPClient sur le serveur : %s", server)
+        client = MCPClient(st.session_state, server=server)
+        st.session_state["mcp_client"] = client
+
+        # 2. FIX CRITIQUE : Si ton client MCP n'est pas initialisé d'office, 
+        # on force sa connexion asynchrone immédiatement au démarrage de la session.
+        try:
+            if hasattr(client, "initialize"):
+                asyncio.run(client.initialize())
+            elif hasattr(client, "start"):
+                asyncio.run(client.start())
+            elif hasattr(client, "connect"):
+                asyncio.run(client.connect())
+        except Exception as conn_err:
+            logger.error("Échec de l'initialisation immédiate du client MCP : %s", conn_err)
+
     if "history" not in st.session_state:
         st.session_state["history"] = ChatHistory()
-
-    chat_history: ChatHistory = st.session_state["history"]
-    _sync_session_from_history(chat_history)
 
     if "completions" not in st.session_state:
         st.session_state["completions"] = OpenAIClient().chat_completions
 
-    if "mcp_client" not in st.session_state:
-        st.session_state["mcp_client"] = MCPClient(st.session_state, server=server)
+    chat_history: ChatHistory = st.session_state["history"]
+    _sync_session_from_history(chat_history)
 
     return chat_history
 
@@ -526,13 +541,13 @@ async def _refresh_model_panel(model_slot: Optional[DeltaGenerator]) -> None:
                 on_timeout_msg="Refreshing the model took too long.",
             )
 
-        if loaded_model:
-            st.session_state["model"] = loaded_model
+            if loaded_model:
+                st.session_state["model"] = loaded_model
 
-            if loaded_model.get("elements"):
-                root: dict[str, Any] = loaded_model["elements"][0]
-                st.session_state["ID"] = root.get("ID")
-                st.session_state["package"] = root.get("package")
+                if loaded_model.get("elements"):
+                    root: dict[str, Any] = loaded_model["elements"][0]
+                    st.session_state["ID"] = root.get("ID")
+                    st.session_state["package"] = root.get("package")
 
         st.session_state["_model_render_prefix"] = _new_model_render_prefix()
         model_slot.empty()
@@ -652,7 +667,7 @@ async def _render_chat_panel(
 # ----------------------------------------------------------------------
 # Main tab
 # ----------------------------------------------------------------------
-async def data_modelling_chat_tab(server: str) -> None:
+def data_modelling_chat_tab(server: str) -> None:
     render_persistent_error_banner()
     _inject_layout_css()
 
@@ -669,7 +684,7 @@ async def data_modelling_chat_tab(server: str) -> None:
         return
 
     try:
-        await _load_model_if_possible()
+        asyncio.run(_load_model_if_possible())
     except Exception as e:
         show_user_error("A critical error occurred while loading the model.", details=str(e))
         return
@@ -691,7 +706,7 @@ async def data_modelling_chat_tab(server: str) -> None:
         model_slot: Optional[DeltaGenerator] = None
 
         with col_model:
-            model_slot = await _render_model_panel()
+            model_slot = asyncio.run(_render_model_panel())
 
         with col_chat:
             chat_container = st.container()
@@ -717,10 +732,11 @@ async def data_modelling_chat_tab(server: str) -> None:
             st.rerun()
 
         with chat_container:
-            await _render_chat_panel(
-                user_input=st.session_state.pop("_pending_input", None),
-                model_slot=model_slot,
-            )
+            pending = st.session_state.pop("_pending_input", None)
+            if pending:
+                asyncio.run(_render_chat_panel(user_input=pending, model_slot=model_slot))
+            else:
+                asyncio.run(_render_chat_panel(model_slot=model_slot))
 
     except Exception as e:
         _clear_generation_state()

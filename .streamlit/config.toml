@@ -2,6 +2,6 @@
 port = 8002
 maxUploadSize = 5
 enableXsrfProtection = false
-enableCORS = false
+enableCORS = true
 [browser]
 gatherUsageStats = false
