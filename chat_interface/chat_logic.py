@@ -419,6 +419,13 @@ async def process_user_input(
 
         history: ChatHistory = st.session_state["history"]
 
+        if not history.user or not history.name:
+            show_user_error(
+                "Session non définie.",
+                details="Veuillez d'abord définir un utilisateur et un nom de session."
+            )
+            return
+
         skip_user_echo = _consume_skip_user_echo_flag()
         if not skip_user_echo:
             with st.chat_message("user"):
@@ -586,7 +593,6 @@ async def process_user_input(
 
         try:
             history.save()
-            st.rerun()
         except Exception as e:
             show_user_error("Saving the conversation failed.", details=str(e))
             with st.chat_message("assistant"):

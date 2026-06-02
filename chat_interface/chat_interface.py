@@ -305,7 +305,7 @@ def _init_state(server: str) -> ChatHistory:
         client = MCPClient(st.session_state, server=server)
         st.session_state["mcp_client"] = client
 
-        # 2. FIX CRITIQUE : Si ton client MCP n'est pas initialisé d'office, 
+        # 2. FIX CRITIQUE : Si ton client MCP n'est pas initialisé d'office,
         # on force sa connexion asynchrone immédiatement au démarrage de la session.
         try:
             if hasattr(client, "initialize"):
@@ -330,6 +330,7 @@ def _init_state(server: str) -> ChatHistory:
 
 
 def _render_connection_sidebar(chat_history: ChatHistory) -> None:
+    _reset_sidebar_widget_values_if_needed()
     is_generating = st.session_state.get("_generating", False)
 
     with st.sidebar:
@@ -352,8 +353,9 @@ def _render_connection_sidebar(chat_history: ChatHistory) -> None:
                 if not user_value:
                     show_user_error("Please enter a user before continuing.")
                     return
-                chat_history.user = user_value
-                _sync_session_from_history(chat_history)
+                history = ChatHistory(user=user_value)
+                _set_active_history(history, reset_model=True)
+                st.session_state["_reset_sidebar_inputs"] = True
                 st.rerun()
 
         else:
@@ -376,17 +378,16 @@ def _render_connection_sidebar(chat_history: ChatHistory) -> None:
                     if not session_value:
                         show_user_error("Please enter a session name before continuing.")
                         return
-                    chat_history.name = session_value
                     try:
-                        chat_history.save()
+                        _open_or_create_history(chat_history.user, session_value)
+                        st.session_state["_reset_sidebar_inputs"] = True
+                        st.rerun()
                     except Exception as e:
                         show_user_error(
-                            "A critical error occurred while saving the session.",
+                            "A critical error occurred while opening the session.",
                             details=str(e),
                         )
                         return
-                    _sync_session_from_history(chat_history)
-                    st.rerun()
             else:
                 st.write(f"**Session:** {chat_history.name}")
 
@@ -407,8 +408,8 @@ def _render_connection_sidebar(chat_history: ChatHistory) -> None:
                         show_user_error("Please enter a session name to load.")
                         return
                     try:
-                        chat_history.load(reload_session)
-                        _sync_session_from_history(chat_history)
+                        _open_or_create_history(chat_history.user, reload_session)
+                        st.session_state["_reset_sidebar_inputs"] = True
                         st.rerun()
                     except Exception as e:
                         show_user_error(
@@ -432,6 +433,13 @@ def _render_connection_sidebar(chat_history: ChatHistory) -> None:
         ):
             _toggle_visualisation_panel()
             st.rerun()
+
+
+def _reset_sidebar_widget_values_if_needed() -> None:
+    if st.session_state.pop("_reset_sidebar_inputs", False):
+        st.session_state.pop("sidebar_session_value", None)
+        st.session_state.pop("sidebar_reload_session", None)
+        st.session_state.pop("sidebar_user_value", None)
 
 
 async def _load_model_if_possible() -> dict[str, Any]:
@@ -662,6 +670,31 @@ async def _render_chat_panel(
 
         elif st.session_state.get("_generating", False):
             _render_thinking_message(bottom_placeholder)
+
+
+def _set_active_history(history: ChatHistory, reset_model: bool = True) -> None:
+    st.session_state["history"] = history
+    st.session_state["user"] = history.user
+    st.session_state["name"] = history.name
+
+    _clear_generation_state()
+
+    if reset_model:
+        st.session_state["model"] = {}
+        st.session_state.pop("ID", None)
+        st.session_state.pop("package", None)
+        st.session_state["_model_render_prefix"] = _new_model_render_prefix()
+
+
+def _open_or_create_history(user: str, session_name: str) -> ChatHistory:
+    existed = ChatHistory.session_exists(user, session_name)
+    history = ChatHistory(user=user, name=session_name)
+
+    if not existed:
+        history.save()
+
+    _set_active_history(history, reset_model=True)
+    return history
 
 
 # ----------------------------------------------------------------------

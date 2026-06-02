@@ -42,34 +42,32 @@ class ChatHistory:
         system_prompt: str = "",
         welcome_prompt: str = "",
     ) -> None:
-        self.user: str = user
-        self.name: str = name
+        self.user = user
+        self.name = name
 
-        self.display_messages: list[ChatCompletionMessageParam] = (
-            list(display_messages) if display_messages else []
-        )
-        self.system_messages: list[ChatCompletionMessageParam] = (
-            list(system_messages) if system_messages else []
-        )
-        self.conversation_summary: list[str] = (
-            list(conversation_summary) if conversation_summary else []
-        )
-        self.current_request_trace: list[dict[str, Any]] = (
-            list(current_request_trace) if current_request_trace else []
-        )
-        self.current_request_llm_messages: list[ChatCompletionMessageParam] = (
+        self._reset_state()
+
+        if self.user and self.name and self.session_exists(self.user, self.name):
+            self.load(self.name)
+            return
+
+        self.display_messages = list(display_messages) if display_messages else []
+        self.system_messages = list(system_messages) if system_messages else []
+        self.conversation_summary = list(conversation_summary) if conversation_summary else []
+        self.current_request_trace = list(current_request_trace) if current_request_trace else []
+        self.current_request_llm_messages = (
             list(current_request_llm_messages) if current_request_llm_messages else []
         )
-        self.current_request_user_input: str = current_request_user_input
+        self.current_request_user_input = current_request_user_input
 
-        self.last_two_messages_fullish: list[dict[str, str]] = (
+        self.last_two_messages_fullish = (
             deepcopy(last_two_messages_fullish) if last_two_messages_fullish else []
         )
-        self.last_execution_plan_full: str = last_execution_plan_full or ""
-        self.retained_retrieve_documents: list[dict[str, Any]] = (
+        self.last_execution_plan_full = last_execution_plan_full or ""
+        self.retained_retrieve_documents = (
             deepcopy(retained_retrieve_documents) if retained_retrieve_documents else []
         )
-        self.last_tool_observations_compact: list[dict[str, Any]] = (
+        self.last_tool_observations_compact = (
             deepcopy(last_tool_observations_compact) if last_tool_observations_compact else []
         )
 
@@ -159,6 +157,27 @@ class ChatHistory:
     def _extract_tool_arguments_from_call(call: ChatCompletionMessageToolCallParam) -> str:
         function = call.get("function", {}) if isinstance(call, dict) else {}
         return str(function.get("arguments", "{}"))
+
+    @staticmethod
+    def session_exists(user: str, name: str) -> bool:
+        if not user or not name:
+            return False
+
+        display_fp = f"{PATH_DISPLAY_HISTORIES}/{user}/{name}.json"
+        llm_fp = f"{PATH_LLM_HISTORIES}/{user}/{name}.json"
+        return exists(display_fp) or exists(llm_fp)
+
+    def _reset_state(self) -> None:
+        self.display_messages = []
+        self.system_messages = []
+        self.conversation_summary = []
+        self.current_request_trace = []
+        self.current_request_llm_messages = []
+        self.current_request_user_input = ""
+        self.last_two_messages_fullish = []
+        self.last_execution_plan_full = ""
+        self.retained_retrieve_documents = []
+        self.last_tool_observations_compact = []
 
     def _append_recent_message(self, role: str, content: str) -> None:
         if role not in {"user", "assistant"}:
@@ -641,6 +660,7 @@ class ChatHistory:
             return
 
         self.name = name
+        self._reset_state()
 
         if exists(display_fp):
             with open(display_fp, "r", encoding="utf-8") as file:
