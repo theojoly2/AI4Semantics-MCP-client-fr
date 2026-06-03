@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 from typing import Any, Optional
 from io import BytesIO
 import asyncio
@@ -8,8 +9,10 @@ from os import environ
 import uuid
 from json import loads
 
+
 import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
+
 
 # Local application imports
 from clients import OpenAIClient, MCPClient
@@ -282,8 +285,8 @@ def _toggle_visualisation_panel() -> None:
 def _clear_generation_state() -> None:
     st.session_state["_generating"] = False
     st.session_state["_pending_input"] = None
-    st.session_state["_pending_user_message"] = None
-    st.session_state["_suppress_user_echo_once"] = False
+    st.session_state["_thinking_visible"] = False
+    st.session_state["_assistant_streaming"] = False
 
 
 def _init_state(server: str) -> ChatHistory:
@@ -295,18 +298,21 @@ def _init_state(server: str) -> ChatHistory:
     st.session_state.setdefault("model", {})
     st.session_state.setdefault("_generating", False)
     st.session_state.setdefault("_pending_input", None)
-    st.session_state.setdefault("_pending_user_message", None)
-    st.session_state.setdefault("_suppress_user_echo_once", False)
     st.session_state.setdefault("_model_render_prefix", _new_model_render_prefix())
+    st.session_state.setdefault("_model_loading", False)
+    st.session_state.setdefault("_uploaded_model_bytes", None)
+    st.session_state.setdefault("_uploaded_model_name", None)
+    st.session_state.setdefault("_model_uploader_nonce", 0)
+    st.session_state.setdefault("_thinking_visible", False)
+    st.session_state.setdefault("_assistant_streaming", False)
+    st.session_state.setdefault("_live_chat_events", [])
+    st.session_state.setdefault("_live_event_seq", 0)
 
     if "mcp_client" not in st.session_state:
-        # 1. Instanciation du client
         logger.info("Instanciation du MCPClient sur le serveur : %s", server)
         client = MCPClient(st.session_state, server=server)
         st.session_state["mcp_client"] = client
 
-        # 2. FIX CRITIQUE : Si ton client MCP n'est pas initialisé d'office,
-        # on force sa connexion asynchrone immédiatement au démarrage de la session.
         try:
             if hasattr(client, "initialize"):
                 asyncio.run(client.initialize())
@@ -442,6 +448,30 @@ def _reset_sidebar_widget_values_if_needed() -> None:
         st.session_state.pop("sidebar_user_value", None)
 
 
+def _build_empty_model() -> dict[str, Any]:
+    return {
+        "_empty_model": True,
+        "elements": [],
+        "classes": [],
+        "attributes": [],
+        "connectors": [],
+        "metadata": {
+            "created_from_ui": True,
+            "source": "new_empty_model_button",
+        },
+    }
+
+
+def _is_empty_model(model: Optional[dict[str, Any]]) -> bool:
+    return bool(
+        isinstance(model, dict)
+        and model.get("_empty_model", False)
+        and not model.get("xmi")
+        and not model.get("ttl")
+        and not model.get("elements")
+    )
+
+
 async def _load_model_if_possible() -> dict[str, Any]:
     existing_model = st.session_state.get("model", {}) or {}
     model: dict[str, Any] = existing_model
@@ -477,30 +507,63 @@ async def _render_model_panel_content(model_slot: DeltaGenerator) -> None:
         model = st.session_state.get("model", {})
 
         if not model:
-            uploaded_file = st.file_uploader(
-                "Importer un document XML/TTL",
-                type=["xml", "ttl", "xmi"],
-                accept_multiple_files=False,
-                help="Importez votre modèle de données au format XML exporté depuis EA ou en fichier TTL",
-                key="model_file_uploader",
-                disabled=is_generating,
-            )
+            with st.container(border=True):
+                st.markdown("#### Démarrer un modèle")
+                st.caption("Importez un fichier existant par glisser-déposer, ou créez un modèle vide pour commencer.")
 
-            if uploaded_file is not None:
-                try:
-                    file_buffer: BytesIO = uploaded_file
-                    st.session_state["model"] = await with_timeout(
-                        upload_xml(file_buffer),
-                        seconds=60.0,
-                        on_timeout_msg="Uploading/parsing the file took too long.",
-                    ) or {}
-                    st.session_state["_model_render_prefix"] = _new_model_render_prefix()
-                    st.rerun()
-                except Exception as e:
-                    show_user_error(
-                        "A critical error occurred while uploading the file.",
-                        details=str(e),
-                    )
+                uploaded_file = st.file_uploader(
+                    "Importer un document XML/TTL",
+                    type=["xml", "ttl", "xmi"],
+                    accept_multiple_files=False,
+                    help="Importez votre modèle de données au format XML exporté depuis EA ou en fichier TTL",
+                    key="model_file_uploader",
+                    disabled=is_generating,
+                )
+
+                st.markdown("<div style='height: 0.4rem;'></div>", unsafe_allow_html=True)
+
+                if st.button(
+                    "Créer un modèle vide",
+                    key="create_empty_model_button",
+                    use_container_width=True,
+                    disabled=is_generating,
+                ):
+                    try:
+                        st.session_state["model"] = _build_empty_model()
+                        st.session_state["_model_render_prefix"] = _new_model_render_prefix()
+                        st.session_state.pop("ID", None)
+                        st.session_state.pop("package", None)
+                        st.rerun()
+                    except Exception as e:
+                        show_user_error(
+                            "A critical error occurred while creating the empty model.",
+                            details=str(e),
+                        )
+                        return
+
+                if uploaded_file is not None:
+                    try:
+                        file_buffer: BytesIO = uploaded_file
+                        st.session_state["model"] = await with_timeout(
+                            upload_xml(file_buffer),
+                            seconds=60.0,
+                            on_timeout_msg="Uploading/parsing the file took too long.",
+                        ) or {}
+                        st.session_state["_model_render_prefix"] = _new_model_render_prefix()
+                        st.rerun()
+                    except Exception as e:
+                        show_user_error(
+                            "A critical error occurred while uploading the file.",
+                            details=str(e),
+                        )
+                        return
+
+            return
+
+        if _is_empty_model(model):
+            st.info(
+                "Modèle vide initialisé. Utilisez le chat pour ajouter des classes, attributs et connecteurs."
+            )
             return
 
         try:
@@ -619,20 +682,6 @@ def _render_page_bottom_guard(height_px: int = 56) -> None:
     )
 
 
-def _render_thinking_message(placeholder) -> None:
-    with placeholder.container():
-        with st.chat_message("assistant"):
-            st.markdown(
-                """
-                <div class="chat-thinking-wrap">
-                    <span class="chat-thinking-spinner"></span>
-                    <span class="chat-thinking-label">Le chatbot réfléchit...</span>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-
 async def _render_chat_panel(
     user_input: Optional[str] = None,
     model_slot: Optional[DeltaGenerator] = None,
@@ -642,18 +691,7 @@ async def _render_chat_panel(
     with st.container(height=540, border=False):
         set_chatbox_layout()
 
-        pending_user_message = st.session_state.get("_pending_user_message")
-
-        if pending_user_message:
-            with st.chat_message("user"):
-                st.markdown(pending_user_message)
-
-        bottom_placeholder = st.empty()
-
         if user_input:
-            _render_thinking_message(bottom_placeholder)
-            st.session_state["_suppress_user_echo_once"] = True
-
             async def on_model_mutation(tool_name: str, tool_result: Any = None) -> None:
                 if tool_name in MODEL_MUTATION_TOOLS:
                     await _refresh_model_panel(model_slot)
@@ -668,9 +706,6 @@ async def _render_chat_panel(
 
             st.rerun()
 
-        elif st.session_state.get("_generating", False):
-            _render_thinking_message(bottom_placeholder)
-
 
 def _set_active_history(history: ChatHistory, reset_model: bool = True) -> None:
     st.session_state["history"] = history
@@ -678,6 +713,8 @@ def _set_active_history(history: ChatHistory, reset_model: bool = True) -> None:
     st.session_state["name"] = history.name
 
     _clear_generation_state()
+    st.session_state["_live_chat_events"] = []
+    st.session_state["_live_event_seq"] = 0
 
     if reset_model:
         st.session_state["model"] = {}
@@ -761,7 +798,6 @@ def data_modelling_chat_tab(server: str) -> None:
         if user_input and not is_generating:
             st.session_state["_generating"] = True
             st.session_state["_pending_input"] = user_input
-            st.session_state["_pending_user_message"] = user_input
             st.rerun()
 
         with chat_container:

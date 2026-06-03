@@ -1,6 +1,7 @@
 from __future__ import annotations
 import time
 
+
 # Standard library imports
 from collections import defaultdict
 from typing import Optional, Any, Callable, Awaitable
@@ -9,8 +10,11 @@ import logging
 from json import loads
 from os import environ
 
+
 # Third-party imports
 import streamlit as st
+from streamlit.delta_generator import DeltaGenerator
+
 
 # OpenAI and local application imports
 from openai.types.chat import (
@@ -20,6 +24,7 @@ from openai.types.chat import (
 from openai.resources.chat.completions import AsyncCompletions
 from chat_history import ChatHistory
 from .data_model_utils.chat_data_structure import shorten_json
+
 
 # ----------------------------------------------------------------------
 # Config & logging
@@ -136,6 +141,90 @@ def _render_tool_output(content: str, fallback_name: Optional[str] = None) -> No
             st.write(content)
 
 
+# ----------------------------------------------------------------------
+# Live timeline helpers
+# ----------------------------------------------------------------------
+def _live_events() -> list[dict[str, Any]]:
+    return st.session_state.setdefault("_live_chat_events", [])
+
+
+def _next_live_event_id() -> int:
+    current = int(st.session_state.get("_live_event_seq", 0)) + 1
+    st.session_state["_live_event_seq"] = current
+    return current
+
+
+def _clear_live_events() -> None:
+    st.session_state["_live_chat_events"] = []
+    st.session_state["_live_event_seq"] = 0
+
+
+def _append_live_event(kind: str, content: str = "", **extra: Any) -> int:
+    event_id = _next_live_event_id()
+    _live_events().append(
+        {
+            "id": event_id,
+            "kind": kind,
+            "content": content,
+            **extra,
+        }
+    )
+    return event_id
+
+
+def _update_live_event(event_id: int, **updates: Any) -> None:
+    for event in _live_events():
+        if event.get("id") == event_id:
+            event.update(updates)
+            return
+
+
+def _has_trailing_thinking_event() -> bool:
+    events = _live_events()
+    return bool(events and events[-1].get("kind") == "thinking")
+
+
+def _remove_trailing_thinking_event() -> None:
+    events = _live_events()
+    if events and events[-1].get("kind") == "thinking":
+        events.pop()
+
+
+def _append_assistant_error_event(message: str) -> None:
+    _remove_trailing_thinking_event()
+    _append_live_event("assistant", message)
+
+
+def _render_live_chat_events_in(slot: DeltaGenerator) -> None:
+    with slot.container():
+        for event in _live_events():
+            kind = event.get("kind")
+            content = event.get("content", "")
+
+            if kind == "user" and content:
+                with st.chat_message("user"):
+                    st.write(content)
+
+            elif kind == "assistant":
+                with st.chat_message("assistant"):
+                    st.write(content)
+
+            elif kind == "tool":
+                _render_tool_output(content, fallback_name=event.get("tool_name"))
+
+            elif kind == "thinking":
+                with st.chat_message("assistant"):
+                    st.markdown(
+                        """
+                        <div class="chat-thinking-wrap">
+                            <span class="chat-thinking-spinner"></span>
+                            <span class="chat-thinking-label">Le chatbot réfléchit...</span>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+
 def _build_current_model_prompt(model: Any) -> str:
     if model and "elements" in model:
         return "\n".join([
@@ -227,11 +316,26 @@ def _normalize_tool_calls(raw_tool_calls: Any) -> list[ChatCompletionMessageTool
     return normalized
 
 
+def _render_tool_output_in_area(
+    content: str,
+    fallback_name: Optional[str] = None,
+    area: Optional[DeltaGenerator] = None,
+) -> None:
+    if area is None:
+        _render_tool_output(content, fallback_name=fallback_name)
+        return
+
+    with area:
+        _render_tool_output(content, fallback_name=fallback_name)
+
+
 async def _create_completion_streaming(
     completions: AsyncCompletions,
     llm_messages: list[ChatCompletionMessageParam],
     tools: list[Any],
     completion_params: dict[str, Any],
+    on_assistant_stream_start: Optional[Callable[[], Awaitable[None]]] = None,
+    on_assistant_text_update: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> dict[str, Any]:
     stream = await completions.create(
         messages=llm_messages,
@@ -245,8 +349,8 @@ async def _create_completion_streaming(
 
     assistant_text = ""
     pending_text = ""
-    text_placeholder = None
     streamed_any_text = False
+    assistant_stream_started = False
     last_flush = 0.0
     flush_interval = 0.03  # 30 ms
 
@@ -270,6 +374,14 @@ async def _create_completion_streaming(
 
         text_piece = _extract_delta_content(delta)
         if text_piece:
+            if not assistant_stream_started:
+                assistant_stream_started = True
+                if on_assistant_stream_start is not None:
+                    try:
+                        await on_assistant_stream_start()
+                    except Exception as e:
+                        logger.exception("on_assistant_stream_start callback failed: %s", e)
+
             pending_text += text_piece
 
             now = time.perf_counter()
@@ -283,11 +395,12 @@ async def _create_completion_streaming(
                 assistant_text += pending_text
                 pending_text = ""
 
-                if text_placeholder is None:
-                    with st.chat_message("assistant"):
-                        text_placeholder = st.empty()
+                if on_assistant_text_update is not None:
+                    try:
+                        await on_assistant_text_update(assistant_text)
+                    except Exception as e:
+                        logger.exception("on_assistant_text_update callback failed: %s", e)
 
-                text_placeholder.markdown(assistant_text)
                 streamed_any_text = True
                 last_flush = now
 
@@ -317,9 +430,12 @@ async def _create_completion_streaming(
     if pending_text:
         assistant_text += pending_text
         pending_text = ""
-
-    if text_placeholder is not None:
-        text_placeholder.markdown(assistant_text)
+        if on_assistant_text_update is not None:
+            try:
+                await on_assistant_text_update(assistant_text)
+            except Exception as e:
+                logger.exception("on_assistant_text_update callback failed: %s", e)
+        streamed_any_text = True
 
     tool_calls: list[ChatCompletionMessageToolCallParam] = []
     for idx in sorted(tool_calls_buffer.keys()):
@@ -406,6 +522,10 @@ def set_chatbox_layout() -> None:
 async def process_user_input(
     user_input: str | None,
     on_model_mutation: Optional[Callable[[str, Any], Awaitable[None]]] = None,
+    on_thinking_start: Optional[Callable[[], Awaitable[None]]] = None,
+    on_assistant_stream_start: Optional[Callable[[], Awaitable[None]]] = None,
+    on_assistant_stream_end: Optional[Callable[[bool], Awaitable[None]]] = None,
+    tool_output_area: Optional[DeltaGenerator] = None,
 ) -> None:
     """
     Handles user input, generates LLM responses, and processes tool calls in the chat interface.
@@ -417,19 +537,75 @@ async def process_user_input(
         if user_input is None:
             return
 
+        async def _call_optional(callback, *args):
+            if callback is None:
+                return
+            try:
+                await callback(*args)
+            except Exception as e:
+                logger.exception("UI callback failed: %s", e)
+
+        live_slot = st.empty()
+        _clear_live_events()
+
+        def _rerender_live() -> None:
+            _render_live_chat_events_in(live_slot)
+
+        assistant_live_event_id: Optional[int] = None
         history: ChatHistory = st.session_state["history"]
+
+        async def _begin_thinking() -> None:
+            await _call_optional(on_thinking_start)
+            if not _has_trailing_thinking_event():
+                _append_live_event("thinking")
+                _rerender_live()
+
+        async def _begin_assistant_stream() -> None:
+            nonlocal assistant_live_event_id
+            await _call_optional(on_assistant_stream_start)
+            _remove_trailing_thinking_event()
+            if assistant_live_event_id is None:
+                assistant_live_event_id = _append_live_event("assistant", "")
+            _rerender_live()
+
+        async def _update_assistant_stream(text: str) -> None:
+            nonlocal assistant_live_event_id
+            if assistant_live_event_id is None:
+                await _begin_assistant_stream()
+            if assistant_live_event_id is not None:
+                _update_live_event(assistant_live_event_id, content=text)
+                _rerender_live()
+
+        async def _end_assistant_stream(still_thinking: bool = False) -> None:
+            await _call_optional(on_assistant_stream_end, still_thinking)
+            _rerender_live()
+
+        def _commit_non_streamed_assistant_message(content: str) -> None:
+            nonlocal assistant_live_event_id
+            _remove_trailing_thinking_event()
+            assistant_live_event_id = _append_live_event("assistant", content)
+            _rerender_live()
+
+        def _commit_tool_message(tool_message: str, tool_name: str) -> None:
+            _remove_trailing_thinking_event()
+            _append_live_event("tool", tool_message, tool_name=tool_name)
+            _rerender_live()
 
         if not history.user or not history.name:
             show_user_error(
                 "Session non définie.",
                 details="Veuillez d'abord définir un utilisateur et un nom de session."
             )
+            _append_assistant_error_event(
+                "⚠️ Session non définie.\n\nVeuillez d'abord définir un utilisateur et un nom de session."
+            )
+            _rerender_live()
             return
 
         skip_user_echo = _consume_skip_user_echo_flag()
         if not skip_user_echo:
-            with st.chat_message("user"):
-                st.write(user_input)
+            _append_live_event("user", user_input)
+            _rerender_live()
 
         history.start_new_request(user_input)
         history.add_user_message(user_input)
@@ -438,12 +614,15 @@ async def process_user_input(
         model_prompt = _build_current_model_prompt(model)
 
         async with st.session_state["mcp_client"] as mcp_client:
+            await _begin_thinking()
             tools = await with_timeout(
                 mcp_client.tools(),
                 seconds=3000.0,
                 on_timeout_msg="listing tools took too long.",
             ) or []
             if tools is None:
+                _append_assistant_error_event("⚠️ Tool listing timed out or failed.")
+                _rerender_live()
                 return
 
         completions: AsyncCompletions = st.session_state["completions"]
@@ -451,7 +630,11 @@ async def process_user_input(
 
         loop = True
         while loop:
+            assistant_live_event_id = None
+
             try:
+                await _begin_thinking()
+
                 llm_messages = history.build_messages_for_llm(
                     current_user_input=user_input,
                     current_model_prompt=model_prompt,
@@ -463,11 +646,15 @@ async def process_user_input(
                         llm_messages=llm_messages,
                         tools=tools,
                         completion_params=completion_params,
+                        on_assistant_stream_start=_begin_assistant_stream,
+                        on_assistant_text_update=_update_assistant_stream,
                     ),
                     seconds=3000.0,
                     on_timeout_msg="Generating assistant response took too long.",
                 )
                 if streamed_response is None:
+                    _append_assistant_error_event("⚠️ Assistant generation timed out or failed.")
+                    _rerender_live()
                     return
 
             except Exception as e:
@@ -475,11 +662,11 @@ async def process_user_input(
                     "A critical error occurred while generating the assistant response.",
                     details=str(e),
                 )
-                with st.chat_message("assistant"):
-                    st.write(
-                        "⚠️ A critical error occurred while generating the assistant response.\n\n"
-                        f"{e}"
-                    )
+                _append_assistant_error_event(
+                    "⚠️ A critical error occurred while generating the assistant response.\n\n"
+                    f"{e}"
+                )
+                _rerender_live()
                 return
 
             try:
@@ -487,9 +674,19 @@ async def process_user_input(
                 tool_calls = _normalize_tool_calls(streamed_response.get("tool_calls", []))
                 streamed_any_text = bool(streamed_response.get("streamed_any_text", False))
 
+                if streamed_any_text:
+                    await _end_assistant_stream(bool(tool_calls))
+
                 if content and not streamed_any_text:
-                    with st.chat_message("assistant"):
-                        st.write(content)
+                    await _begin_assistant_stream()
+                    _update_live_event(assistant_live_event_id, content=content)
+                    _rerender_live()
+                    await _end_assistant_stream(bool(tool_calls))
+
+                if not content and not tool_calls:
+                    _remove_trailing_thinking_event()
+                    _rerender_live()
+                    await _end_assistant_stream(False)
 
                 if tool_calls:
                     history.add_assistant_message(
@@ -497,10 +694,14 @@ async def process_user_input(
                         tool_calls=tool_calls,
                     )
 
+                    assistant_live_event_id = None
+
                     for tool_call in tool_calls:
                         function = tool_call["function"]
                         name = function["name"]
                         raw_arguments_text = function.get("arguments", "{}")
+
+                        await _begin_thinking()
 
                         try:
                             args = safe_json_loads(raw_arguments_text)
@@ -514,6 +715,8 @@ async def process_user_input(
                                     on_timeout_msg=f"Calling tool '{name}' took too long.",
                                 )
                                 if tool_message is None:
+                                    _append_assistant_error_event(f"⚠️ Tool '{name}' timed out or failed.")
+                                    _rerender_live()
                                     return
 
                         except Exception as e:
@@ -521,13 +724,12 @@ async def process_user_input(
                                 f"A critical error occurred while calling tool '{name}'.",
                                 details=str(e),
                             )
-                            with st.chat_message("assistant"):
-                                st.write(f"⚠️ Tool error in '{name}': {e}")
+                            _append_assistant_error_event(f"⚠️ Tool error in '{name}': {e}")
+                            _rerender_live()
                             return
 
                         try:
-                            _render_tool_output(tool_message, fallback_name=name)
-
+                            _commit_tool_message(tool_message, name)
                             parsed_tool = safe_json_loads(tool_message)
 
                             history.add_tool_message(
@@ -552,30 +754,36 @@ async def process_user_input(
                             if name == "style_guide_check":
                                 try:
                                     report = parsed_tool.get("tool_results", {}).get("report", "")
+
                                     if report:
-                                        with st.chat_message("assistant"):
-                                            st.write(report)
+                                        _append_live_event("assistant", report)
+                                        _rerender_live()
                                         history.add_assistant_message(report)
                                     else:
-                                        with st.chat_message("assistant"):
-                                            st.write("Style guide check completed.")
+                                        _append_live_event("assistant", "Style guide check completed.")
+                                        _rerender_live()
+
+                                    await _end_assistant_stream(False)
+                                    loop = False
+
                                 except Exception as e:
                                     show_user_error(
                                         "A critical error occurred while displaying the style guide report.",
                                         details=str(e),
                                     )
-                                    with st.chat_message("assistant"):
-                                        st.write(f"⚠️ Style guide display error: {e}")
+                                    _append_assistant_error_event(f"⚠️ Style guide display error: {e}")
+                                    _rerender_live()
                                     return
 
-                                loop = False
                         except Exception as e:
                             show_user_error(
                                 f"A critical error occurred while processing tool output for '{name}'.",
                                 details=str(e),
                             )
-                            with st.chat_message("assistant"):
-                                st.write(f"⚠️ Tool output processing error for '{name}': {e}")
+                            _append_assistant_error_event(
+                                f"⚠️ Tool output processing error for '{name}': {e}"
+                            )
+                            _rerender_live()
                             return
 
                 else:
@@ -587,20 +795,20 @@ async def process_user_input(
                     "A critical error occurred while processing the assistant message.",
                     details=str(e),
                 )
-                with st.chat_message("assistant"):
-                    st.write(f"⚠️ Assistant message processing error: {e}")
+                _append_assistant_error_event(f"⚠️ Assistant message processing error: {e}")
+                _rerender_live()
                 return
 
         try:
             history.save()
+            _clear_live_events()
         except Exception as e:
             show_user_error("Saving the conversation failed.", details=str(e))
-            with st.chat_message("assistant"):
-                st.write(f"⚠️ Saving conversation failed: {e}")
+            _append_assistant_error_event(f"⚠️ Saving conversation failed: {e}")
+            _rerender_live()
         return
 
     except Exception as e:
         show_user_error("A critical unexpected error occurred in chat processing.", details=str(e))
-        with st.chat_message("assistant"):
-            st.write(f"⚠️ Unexpected chat processing error: {e}")
+        _append_assistant_error_event(f"⚠️ Unexpected chat processing error: {e}")
         return
