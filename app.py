@@ -65,18 +65,18 @@ with tab1:
             with st.status("The UI encountered an unexpected error.", expanded=True, state="error") as status:
                 st.write(str(e))
                 st.write(
-                    "**What you can do now:**\n"
-                    "1) Review your inputs and correct the bug if possible.\n"
-                    "2) Re-launch the UI.\n"
-                    "3) If the error keeps happening, contact the tech team at **emilien.caudron@pwc.com**."
+                    "**Ce que vous pouvez faire maintenant :**\n"
+                    "1) Vérifiez vos saisies et corrigez le bug si possible.\n"
+                    "2) Relancez l’interface utilisateur.\n"
+                    "3) Si l’erreur persiste, contactez l’équipe technique à l’adresse **theo.joly2@developpement-durable.gouv.fr**."
                 )
                 status.update(label="Action required", state="error")
         except Exception:
             st.error("The UI encountered an unexpected error.")
             st.write(str(e))
             st.write(
-                "**What you can do now:**\n"
-                "1) Review your inputs and correct the bug if possible.\n"
-                "2) Re-launch the UI.\n"
-                "3) If the error keeps happening, contact the tech team at **emilien.caudron@pwc.com**."
+                "**Ce que vous pouvez faire maintenant :**\n"
+                "1) Vérifiez vos saisies et corrigez le bug si possible.\n"
+                "2) Relancez l’interface utilisateur.\n"
+                "3) Si l’erreur persiste, contactez l’équipe technique à l’adresse **theo.joly2@developpement-durable.gouv.fr**."
             )

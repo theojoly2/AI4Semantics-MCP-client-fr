@@ -24,7 +24,7 @@ from .chat_logic import set_chatbox_layout, process_user_input, show_user_error
 # ----------------------------------------------------------------------
 # Config & logging
 # ----------------------------------------------------------------------
-CONTACT_EMAIL = "emilien.caudron@pwc.com"
+CONTACT_EMAIL = "theo.joly2@developpement-durable.gouv.fr"
 LOGGER_NAME = "data_modelling_chat_tab"
 logger = logging.getLogger(LOGGER_NAME)
 logger.setLevel(logging.INFO)
@@ -58,13 +58,13 @@ def render_persistent_error_banner() -> None:
         contact_email = err.get("contact_email", CONTACT_EMAIL)
         st.markdown(
             f"""
-**What you can do now:**
-1) Review your inputs and correct the bug if possible.
-2) Re-launch the UI.
-3) If the error keeps happening, contact the tech team at **{contact_email}**.
+**Ce que vous pouvez faire maintenant :**\n
+1) Vérifiez vos saisies et corrigez le bug si possible.\n
+2) Relancez l’interface utilisateur.\n
+3) Si l’erreur persiste, contactez l’équipe technique à l’adresse **{contact_email}**.
             """
         )
-        if st.button("Dismiss error", key="dismiss_error_button"):
+        if st.button("Masquer l'erreur", key="dismiss_error_button"):
             st.session_state.pop("ui_error", None)
             st.rerun()
 
