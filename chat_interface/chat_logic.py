@@ -29,7 +29,7 @@ from .data_model_utils.chat_data_structure import shorten_json
 # ----------------------------------------------------------------------
 # Config & logging
 # ----------------------------------------------------------------------
-CONTACT_EMAIL = "emilien.caudron@pwc.com"
+CONTACT_EMAIL = "theo.joly2@developpement-durable.gouv.fr"
 LOGGER_NAME = "data_modelling_chat_chatbox"
 logger = logging.getLogger(LOGGER_NAME)
 logger.setLevel(logging.INFO)
@@ -58,10 +58,10 @@ def show_user_error(title: str, details: Optional[str] = None) -> None:
             if details:
                 st.write(details)
             st.write(
-                f"**What you can do now:**\n"
-                f"1) Review your inputs and correct the bug if possible.\n"
-                f"2) Re-launch the UI.\n"
-                f"3) If the error keeps happening, contact the tech team at **{CONTACT_EMAIL}**."
+                f"**Ce que vous pouvez faire maintenant :**\n"
+                f"1) Vérifiez vos saisies et corrigez le bug si possible.\n"
+                f"2) Relancez l’interface utilisateur.\n"
+                f"3) Si l’erreur persiste, contactez l’équipe technique à l’adresse **{CONTACT_EMAIL}**."
             )
             status.update(label="Action required", state="error")
     except Exception:
@@ -69,10 +69,10 @@ def show_user_error(title: str, details: Optional[str] = None) -> None:
         if details:
             st.write(details)
         st.write(
-            f"**What you can do now:**\n"
-            f"1) Review your inputs and correct the bug if possible.\n"
-            f"2) Re-launch the UI.\n"
-            f"3) If the error keeps happening, contact the tech team at **{CONTACT_EMAIL}**."
+            f"**Ce que vous pouvez faire maintenant :**\n"
+            f"1) Vérifiez vos saisies et corrigez le bug si possible.\n"
+            f"2) Relancez l’interface utilisateur.\n"
+            f"3) Si l’erreur persiste, contactez l’équipe technique à l’adresse **{CONTACT_EMAIL}**."
         )
 
 

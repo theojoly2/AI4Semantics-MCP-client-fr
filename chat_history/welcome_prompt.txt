@@ -2,8 +2,8 @@ Bienvenue sur votre plateforme de gestion de modèles de données ! 🚀
 
 Je suis votre assistant IA, actuellement en phase de preuve de concept (POC). 
 Voici ce que vous pouvez déjà faire :
-- **Exploration interactive** : interrogez des standards de données (vocabulaires SEMIC, schema.data.gouv, ...) en langage naturel.
-- **Import de fichiers** : chargez vos fichiers XMI (Enterprise Architect par exemple) ou vos ontologies OWL en Turtle pour analyse.
+- **Exploration interactive** : interrogez des standards de données (schema.data.gouv) en langage naturel.
+- **Import de fichiers** : chargez vos fichiers XMI (Enterprise Architect ou Papyrus) ou vos ontologies OWL en Turtle pour analyse.
 - **Modification du modèle** : demandez-moi des évolutions de votre modèle de données (ontologie OWL ou UML).
 - **Visualisation** : explorez votre modèle directement dans l'interface.
 - **Export** : renvoyez votre modèle modifié vers Enterprise Architect ou en fichier .ttl.
