@@ -36,7 +36,7 @@ Replace CONTACT_EMAIL with your real support address when ready.
 # ----------------------------------------------------------------------
 # Configuration
 # ----------------------------------------------------------------------
-CONTACT_EMAIL = "emilien.caudron@pwc.com"
+CONTACT_EMAIL = "theo.joly2@developpement-durable.gouv.fr"
 LOGGER_NAME = "fastmcp_ui"
 
 

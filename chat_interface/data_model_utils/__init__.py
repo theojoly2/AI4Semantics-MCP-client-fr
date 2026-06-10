@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 # Standard library imports
 from typing import Any, Optional, Literal
 from pathlib import Path
@@ -8,10 +7,8 @@ from io import BytesIO
 import asyncio
 import logging
 
-
 # Streamlit UI imports
 import streamlit as st
-
 
 # Local application imports
 from clients import MCPClient
@@ -25,7 +22,7 @@ from .export_ttl import jsonld_to_ttl_bytes
 # ----------------------------------------------------------------------
 # Config & logging
 # ----------------------------------------------------------------------
-CONTACT_EMAIL = "emilien.caudron@pwc.com"
+CONTACT_EMAIL = "theo.joly2@developpement-durable.gouv.fr"
 LOGGER_NAME = "model_utils"
 logger = logging.getLogger(LOGGER_NAME)
 logger.setLevel(logging.INFO)
@@ -303,7 +300,7 @@ async def upload_xml(uploaded_file: BytesIO) -> dict[str, Any]:
             json_data["xmi_raw"] = file_bytes.decode("utf-8", errors="replace")
             json_data["xmi_xml"] = json_data["xmi_raw"]
 
-        else:  # kind == "ttl"
+        else:
             try:
                 json_data = ttl_to_json(BytesIO(file_bytes))
             except Exception as e:
