@@ -197,13 +197,17 @@ def _tag_lines(tags: list[dict[str, Any]] | None) -> list[str]:
     return lines
 
 
-def _add_comment(parent: Element, text: str | None, comment_id: str) -> None:
+def _add_comment(parent: Element, text: str | None,
+                 comment_id: str,
+                 annotated_id: str | None = None) -> None:
     if not _is_non_empty(text):
         return
 
     owned_comment = SubElement(parent, "ownedComment")
     owned_comment.set(_xmi_attr("id"), comment_id)
     owned_comment.set(_xmi_attr("type"), "uml:Comment")
+    if annotated_id:
+        owned_comment.set("annotatedElement", annotated_id)
 
     body = SubElement(owned_comment, "body")
     body.text = str(text).strip()
@@ -408,7 +412,12 @@ def _add_attribute(
     )
 
     attr_comment = _build_comment_text_from_tags(_safe_list(attribute_dict.get("tags_attribute")))
-    _add_comment(attr, attr_comment, f"{attr_id}_comment")
+    _add_comment(
+        attr,
+        attr_comment,
+        f"{attr_id}_comment",
+        annotated_id=attr_id,
+        )
 
 
 def _add_class_like(
@@ -429,6 +438,7 @@ def _add_class_like(
         element,
         _build_comment_text_from_tags(_safe_list(element_dict.get("tags"))),
         f"{element_id}_comment",
+        annotated_id=element_id,
     )
 
     for index, attribute_dict in enumerate(_safe_list(element_dict.get("attributes")), start=1):
@@ -458,6 +468,7 @@ def _add_enumeration(parent: Element, element_dict: dict[str, Any]) -> Element:
         enum_elem,
         _build_comment_text_from_tags(_safe_list(element_dict.get("tags"))),
         f"{element_id}_comment",
+        annotated_id=element_id,
     )
 
     categories = element_dict.get("categories")
@@ -493,6 +504,7 @@ def _add_package(parent: Element, element_dict: dict[str, Any]) -> Element:
         package,
         _build_comment_text_from_tags(_safe_list(element_dict.get("tags"))),
         f"{element_id}_comment",
+        annotated_id=element_id,
     )
     return package
 
@@ -604,6 +616,7 @@ def _add_generalization(
         gen,
         _build_connector_comment(connector_dict),
         f"{general_id}_comment",
+        annotated_id=general_id,
     )
 
 
@@ -742,6 +755,7 @@ def _add_association(
         assoc,
         _build_connector_comment(connector_dict),
         f"{assoc_id}_comment",
+        annotated_id=assoc_id,
     )
 
 

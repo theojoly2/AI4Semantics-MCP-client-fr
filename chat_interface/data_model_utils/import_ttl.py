@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from typing import Any
@@ -6,6 +5,7 @@ from io import BytesIO
 
 import rdflib
 import json
+import uuid
 
 """
 ttl_to_uml_json.py
@@ -20,12 +20,13 @@ Convert an OWL/RDF ontology in Turtle (TTL) to an Enterprise Architect-like UML 
 IDs are deterministic per URI (uuid5), prefixed EA-like: EAPK_ for packages, EAID_ for classes.
 """
 
-import uuid
 from rdflib import Graph, Namespace, RDF, RDFS, OWL, XSD, URIRef, Literal
 
 # Namespaces that often appear
 SKOS = Namespace("http://www.w3.org/2004/02/skos/core#")
 FOAF = Namespace("http://xmlns.com/foaf/0.1/")
+UML_META = Namespace("urn:ai4semantics:uml:")
+
 
 # ---------- Helpers ----------
 
@@ -36,6 +37,7 @@ def ea_id(prefix: str, uri: str) -> str:
     u = uuid.uuid5(uuid.NAMESPACE_URL, str(uri))
     s = str(u).replace('-', '_').upper()
     return f"{prefix}_{s}"
+
 
 def local_name(uri: URIRef) -> str:
     """
@@ -48,6 +50,7 @@ def local_name(uri: URIRef) -> str:
         s = s.rstrip('/').split('/')[-1]
     return s
 
+
 def get_label(g: Graph, s: URIRef, lang: str = "en") -> str | None:
     vals = list(g.objects(s, RDFS.label))
     if not vals:
@@ -59,6 +62,7 @@ def get_label(g: Graph, s: URIRef, lang: str = "en") -> str | None:
     # fallback to first literal/string
     return str(vals[0])
 
+
 def get_comment(g: Graph, s: URIRef, lang: str = "en") -> str | None:
     vals = list(g.objects(s, RDFS.comment))
     if not vals:
@@ -67,6 +71,15 @@ def get_comment(g: Graph, s: URIRef, lang: str = "en") -> str | None:
         if isinstance(v, Literal) and v.language == lang:
             return str(v)
     return str(vals[0])
+
+
+def get_literal_value(g: Graph, s: URIRef, p: URIRef) -> str | None:
+    """Safely extract a raw string from a given triple property."""
+    vals = list(g.objects(s, p))
+    if not vals:
+        return None
+    return str(vals[0])
+
 
 def primitive_from_range(r: URIRef) -> str | None:
     """
@@ -95,6 +108,7 @@ def primitive_from_range(r: URIRef) -> str | None:
     }
     return xsd_map.get(s)
 
+
 def role_name_from_label(label: str | None) -> str | None:
     """
     EA diagrams often show role names like '+isAbout'. We'll prefix with '+' if label exists.
@@ -102,6 +116,7 @@ def role_name_from_label(label: str | None) -> str | None:
     if not label:
         return None
     return f"+{label}"
+
 
 # ---------- Extraction ----------
 
@@ -120,10 +135,13 @@ def extract_ontology_package(g: Graph, custom_name: str | None = None) -> dict:
     return {
         "name": name,
         "ID": pkg_id,
+        "uri": pkg_uri,
         "type": "uml:Package",
-        "package": None,  # root has no container, or set to another if desired
-        "tags": []  # you can add {"name":"uri","value": pkg_uri} if you need
+        "visibility": "public",
+        "package": "",
+        "tags": []
     }
+
 
 def build_model(g: Graph, package_name: str | None = None) -> dict:
     model = {"elements": [], "connectors": []}
@@ -148,13 +166,16 @@ def build_model(g: Graph, package_name: str | None = None) -> dict:
         label = get_label(g, cls, "en")
         if label:
             tags.append({"name": "label-en", "value": label})
+        
         # Optional: usage scope tag aligned to many SEMIC models
         tags.append({"name": "class-usage-scope", "value": "main"})
 
         elem = {
             "name": name,
             "ID": cls_id,
+            "uri": uri,
             "type": "uml:Class",
+            "visibility": "public",
             "package": root_pkg_id,
             "tags": tags,
             "attributes": []
@@ -171,7 +192,9 @@ def build_model(g: Graph, package_name: str | None = None) -> dict:
             elem = {
                 "name": name,
                 "ID": cls_id,
+                "uri": u,
                 "type": "uml:Class",
+                "visibility": "public",
                 "package": root_pkg_id,
                 "tags": [{"name": "uri", "value": u}],
                 "attributes": []
@@ -185,21 +208,21 @@ def build_model(g: Graph, package_name: str | None = None) -> dict:
         prop_uri = str(prop)
         prop_label = get_label(g, prop, "en")
         prop_comment = get_comment(g, prop, "en")
-        # domains
+        
+        # Domains
         for domain in g.objects(prop, RDFS.domain):
             domain_uri = str(domain)
             if domain_uri not in class_elems:
-                # if domain class wasn't declared as owl:Class, still ensure it exists
                 ensure_class(domain)
             domain_elem = class_elems[domain_uri]
-            # range
+            
+            # Range
             ranges = list(g.objects(prop, RDFS.range)) or [RDFS.Literal]
             for rng in ranges:
                 primitive = primitive_from_range(rng)
                 if primitive:
                     attr_type = primitive
                 else:
-                    # Non-primitive (e.g., GenericDate): ensure class and use its name
                     rng_elem = ensure_class(rng)
                     attr_type = rng_elem["name"]
 
@@ -212,12 +235,12 @@ def build_model(g: Graph, package_name: str | None = None) -> dict:
 
                 domain_elem["attributes"].append({
                     "name": attr_name,
-                    "type": attr_type,
-                    # Optional multiplicity defaults (no cardinality info in plain RDFS):
-                    "lower": None,
-                    "upper": None,
                     "visibility": "public",
-                    "tags": attr_tags
+                    "type": attr_type,
+                    "uri": prop_uri,
+                    "lower_bounds": get_literal_value(g, prop, UML_META.lowerBound) or "",
+                    "upper_bounds": get_literal_value(g, prop, UML_META.upperBound) or "",
+                    "tags_attribute": attr_tags
                 })
 
     # 3) Object properties -> associations
@@ -228,47 +251,69 @@ def build_model(g: Graph, package_name: str | None = None) -> dict:
 
         domains = list(g.objects(prop, RDFS.domain))
         ranges = list(g.objects(prop, RDFS.range))
+        
         # If any side is missing, we cannot create a robust connector
         if not domains or not ranges:
             continue
+
+        relationship = get_literal_value(g, prop, UML_META.relationshipType) or "Association"
 
         for domain in domains:
             domain_elem = ensure_class(domain)
             for rng in ranges:
                 range_elem = ensure_class(rng)
-                connector = {
-                    "source_name": domain_elem["name"],
-                    "target_name": range_elem["name"],
-                    "relationship": "Association",
-                    "lb": None,             # left multiplicity bound (optional)
-                    "lt": None,             # left role (optional)
-                    "rb": None,             # right multiplicity bound (optional)
-                    "rt": role_name_from_label(prop_label),  # right role name
-                    "tags": [],
-                    "tags_source": [],
-                    "tags_target": []
-                }
-                # Put property metadata under tags_target (as in your example)
-                tgt_tags = [{"name": "uri", "value": prop_uri}]
+                
+                connector_id = ea_id("CONN", f"{str(domain)}:{str(rng)}:{prop_uri}")
+                
+                tgt_tags = [{"name": "uri", "value": prop_uri}, {"name": "connector_id", "value": connector_id}]
                 if prop_comment:
                     tgt_tags.append({"name": "definition-en", "value": prop_comment})
                 if prop_label:
                     tgt_tags.append({"name": "label-en", "value": prop_label})
-                connector["tags_target"] = tgt_tags
+
+                connector = {
+                    "connector_id": connector_id,
+                    "source_id": domain_elem["ID"],
+                    "target_id": range_elem["ID"],
+                    "source_name": domain_elem["name"],
+                    "target_name": range_elem["name"],
+                    "relationship": relationship,
+                    "name": prop_label or local_name(prop),
+                    "uri": prop_uri,
+                    "lb": get_literal_value(g, prop, UML_META.leftMultiplicity) or "",
+                    "lt": get_literal_value(g, prop, UML_META.leftRole) or "",
+                    "rb": get_literal_value(g, prop, UML_META.rightMultiplicity) or "",
+                    "rt": get_literal_value(g, prop, UML_META.rightRole) or role_name_from_label(prop_label) or "",
+                    "tags": [{"name": "connector_id", "value": connector_id}],
+                    "tags_source": [],
+                    "tags_target": tgt_tags
+                }
                 model["connectors"].append(connector)
 
     # 4) rdfs:subClassOf -> generalizations
     for child, parent in g.subject_objects(RDFS.subClassOf):
-        # skip blank-node restrictions here; focus on named superclass
         if isinstance(parent, URIRef):
             child_elem = ensure_class(child)
             parent_elem = ensure_class(parent)
+            
+            connector_id = ea_id("CONN", f"{str(child)}:{str(parent)}:subClassOf")
+            
             gen = {
+                "connector_id": connector_id,
+                "source_id": child_elem["ID"],
+                "target_id": parent_elem["ID"],
                 "source_name": child_elem["name"],
                 "target_name": parent_elem["name"],
                 "relationship": "Generalization",
-                "lb": None, "lt": None, "rb": None, "rt": None,
-                "tags": [], "tags_source": [], "tags_target": []
+                "name": "subClassOf",
+                "uri": "http://www.w3.org/2000/01/rdf-schema#subClassOf",
+                "lb": "", 
+                "lt": "", 
+                "rb": "", 
+                "rt": "",
+                "tags": [{"name": "connector_id", "value": connector_id}], 
+                "tags_source": [], 
+                "tags_target": [{"name": "connector_id", "value": connector_id}]
             }
             model["connectors"].append(gen)
 
@@ -280,7 +325,7 @@ def ttl_to_json(uploaded_file: BytesIO) -> dict[str, Any]:
     Imports a TTL file, parses it as an RDF graph, and serializes to JSON-LD and TTL.
 
     :param uploaded_file: The uploaded TTL file (BytesIO).
-    :return: A dict with "ttl" (JSON-LD as Python objects) and "ttl_raw" (TTL string).
+    :return: A dict with "ttl" (JSON-LD as Python objects), "ttl_raw" (TTL string), and "xmi" (Unified elements structure).
     """
     try:
         # Ensure pointer at start
@@ -300,7 +345,6 @@ def ttl_to_json(uploaded_file: BytesIO) -> dict[str, Any]:
         ttl_raw = ttl_raw_bytes.decode("utf-8") if isinstance(ttl_raw_bytes, (bytes, bytearray)) else str(ttl_raw_bytes)
 
         xmi = build_model(g)
-        #json_xmi = json.loads(xmi) if xmi else {}
 
         return {
             "ttl": json_data,
@@ -310,5 +354,3 @@ def ttl_to_json(uploaded_file: BytesIO) -> dict[str, Any]:
     except Exception as e:
         # Let caller show a friendly message
         raise
-
-
