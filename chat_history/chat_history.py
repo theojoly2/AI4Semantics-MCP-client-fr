@@ -188,7 +188,7 @@ class ChatHistory:
                 "content": self._truncate(content, 8000),
             }
         )
-        self.last_two_messages_fullish = self.last_two_messages_fullish[-2:]
+        self.last_two_messages_fullish = self.last_two_messages_fullish[-6:]
 
     def _extract_retrieve_filenames_from_content(self, content: str) -> list[str]:
         parsed = self._safe_json_loads(content)
@@ -574,7 +574,7 @@ class ChatHistory:
 
         if self.last_two_messages_fullish:
             rendered_messages: list[str] = []
-            for i, msg in enumerate(self.last_two_messages_fullish[-2:], start=1):
+            for i, msg in enumerate(self.last_two_messages_fullish[-6:], start=1):
                 rendered_messages.append(
                     f"[RECENT MESSAGE {i} - ROLE={msg.get('role', '')}]\n{msg.get('content', '')}"
                 )
