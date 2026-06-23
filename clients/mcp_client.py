@@ -441,6 +441,7 @@ class MCPClient:
                 arguments.get("return_full_document"),
                 default=True,
             ),
+            "tags": self.state.get("selected_tags", [])
         }
         payload["tool_arguments"] = call_args
 
@@ -806,6 +807,30 @@ class MCPClient:
     # ------------------------------------------------------------------
     # Direct UI helpers (not exposed to the LLM)
     # ------------------------------------------------------------------
+    async def get_available_tags(self) -> list[dict[str, Any]]:
+        assert self.client is not None, "MCP client not initialized"
+        try:
+            # Appel direct au client FastMCP sous-jacent avec les arguments vides {}
+            res = await with_timeout(
+                self.client.call_tool("get_available_tags", {}),
+                seconds=30.0,
+                on_timeout_msg="Fetching tags timed out.",
+            )
+            if res is None:
+                return []
+
+            if getattr(res, "data", None) is not None and isinstance(res.data, list):
+                return res.data
+
+            text = "".join(getattr(b, "text", "") for b in (res.content or []))
+            if text:
+                parsed = safe_json_loads(text)
+                if isinstance(parsed, list):
+                    return parsed
+            return []
+        except Exception as e:
+            logger.exception("get_available_tags failed: %s", e)
+            return []
 
     async def upload_model(self, arguments: dict[str, Any]) -> dict[str, Any]:
         assert self.client is not None, "MCP client not initialized"

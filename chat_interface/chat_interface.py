@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 from typing import Any, Optional
 from io import BytesIO
 import asyncio
@@ -8,18 +7,16 @@ import logging
 from os import environ
 import uuid
 from json import loads
-
+import ast
 
 import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
-
 
 # Local application imports
 from clients import OpenAIClient, MCPClient
 from chat_history import ChatHistory
 from .data_model_utils import upload_xml, download_xml, visualise
 from .chat_logic import set_chatbox_layout, process_user_input, show_user_error
-
 
 # ----------------------------------------------------------------------
 # Config & logging
@@ -34,13 +31,11 @@ if not logger.handlers:
     _h.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s"))
     logger.addHandler(_h)
 
-
 MODEL_MUTATION_TOOLS = {
     "add_class",
     "add_attribute",
     "add_connector",
 }
-
 
 # ----------------------------------------------------------------------
 # Persistent error banner renderer
@@ -60,14 +55,13 @@ def render_persistent_error_banner() -> None:
             f"""
 **Ce que vous pouvez faire maintenant :**\n
 1) Vérifiez vos saisies et corrigez le bug si possible.\n
-2) Relancez l’interface utilisateur.\n
-3) Si l’erreur persiste, contactez l’équipe technique à l’adresse **{contact_email}**.
+2) Relancez l'interface utilisateur.\n
+3) Si l'erreur persiste, contactez l'équipe technique à l'adresse **{contact_email}**.
             """
         )
         if st.button("Masquer l'erreur", key="dismiss_error_button"):
             st.session_state.pop("ui_error", None)
             st.rerun()
-
 
 # ----------------------------------------------------------------------
 # Async timeout helper
@@ -82,7 +76,6 @@ async def with_timeout(coro, seconds: float = 45.0, on_timeout_msg: str = ""):
         )
         return None
 
-
 def safe_json_loads(text: Optional[str]) -> dict:
     if not text:
         return {}
@@ -92,13 +85,32 @@ def safe_json_loads(text: Optional[str]) -> dict:
         logger.exception("JSON parsing failed: %s", e)
         return {}
 
-
 # ----------------------------------------------------------------------
 # Internal helpers
 # ----------------------------------------------------------------------
+def _get_val(obj: Any, key: str, default: Any = None) -> Any:
+    """
+    Extrait une valeur de façon sécurisée, que l'objet soit un dictionnaire, 
+    un objet Pydantic (ex: RootModel) ou un objet classique.
+    """
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    if hasattr(obj, "root") and isinstance(obj.root, dict):
+        return obj.root.get(key, default)
+    if hasattr(obj, "model_dump"):
+        try:
+            return obj.model_dump().get(key, default)
+        except Exception:
+            pass
+    if hasattr(obj, "dict"):
+        try:
+            return obj.dict().get(key, default)
+        except Exception:
+            pass
+    return getattr(obj, key, default)
+
 def _new_model_render_prefix() -> str:
     return f"model_render_{uuid.uuid4().hex}"
-
 
 def _inject_layout_css() -> None:
     st.markdown(
@@ -165,6 +177,7 @@ def _inject_layout_css() -> None:
                 padding-top: 0.2rem !important;
                 padding-bottom: 0.2rem !important;
                 background: transparent !important;
+                width: 100% !important;
             }
 
             div[data-testid="stChatInput"] textarea,
@@ -272,22 +285,18 @@ def _inject_layout_css() -> None:
         unsafe_allow_html=True,
     )
 
-
 def _sync_session_from_history(chat_history: ChatHistory) -> None:
     st.session_state["user"] = chat_history.user
     st.session_state["name"] = chat_history.name
 
-
 def _toggle_visualisation_panel() -> None:
     st.session_state["panel_collapsed"] = not st.session_state.get("panel_collapsed", False)
-
 
 def _clear_generation_state() -> None:
     st.session_state["_generating"] = False
     st.session_state["_pending_input"] = None
     st.session_state["_thinking_visible"] = False
     st.session_state["_assistant_streaming"] = False
-
 
 def _init_state(server: str) -> ChatHistory:
     if not environ.get("LLM_MODEL"):
@@ -307,6 +316,10 @@ def _init_state(server: str) -> ChatHistory:
     st.session_state.setdefault("_assistant_streaming", False)
     st.session_state.setdefault("_live_chat_events", [])
     st.session_state.setdefault("_live_event_seq", 0)
+
+    # INIT POUR LES TAGS
+    st.session_state.setdefault("selected_tags", [])
+    st.session_state.setdefault("_tags_initialized", False)
 
     if "mcp_client" not in st.session_state:
         logger.info("Instanciation du MCPClient sur le serveur : %s", server)
@@ -440,13 +453,11 @@ def _render_connection_sidebar(chat_history: ChatHistory) -> None:
             _toggle_visualisation_panel()
             st.rerun()
 
-
 def _reset_sidebar_widget_values_if_needed() -> None:
     if st.session_state.pop("_reset_sidebar_inputs", False):
         st.session_state.pop("sidebar_session_value", None)
         st.session_state.pop("sidebar_reload_session", None)
         st.session_state.pop("sidebar_user_value", None)
-
 
 def _build_empty_model() -> dict[str, Any]:
     return {
@@ -461,7 +472,6 @@ def _build_empty_model() -> dict[str, Any]:
         },
     }
 
-
 def _is_empty_model(model: Optional[dict[str, Any]]) -> bool:
     return bool(
         isinstance(model, dict)
@@ -470,7 +480,6 @@ def _is_empty_model(model: Optional[dict[str, Any]]) -> bool:
         and not model.get("ttl")
         and not model.get("elements")
     )
-
 
 async def _load_model_if_possible() -> dict[str, Any]:
     existing_model = st.session_state.get("model", {}) or {}
@@ -488,13 +497,13 @@ async def _load_model_if_possible() -> dict[str, Any]:
 
     st.session_state["model"] = model
 
-    if model.get("elements"):
-        root: dict[str, Any] = model["elements"][0]
-        st.session_state["ID"] = root.get("ID")
-        st.session_state["package"] = root.get("package")
+    elements = _get_val(model, "elements")
+    if elements and isinstance(elements, list):
+        root_elem = elements[0]
+        st.session_state["ID"] = _get_val(root_elem, "ID")
+        st.session_state["package"] = _get_val(root_elem, "package")
 
     return model
-
 
 async def _render_model_panel_content(model_slot: DeltaGenerator) -> None:
     is_generating = st.session_state.get("_generating", False)
@@ -596,7 +605,6 @@ async def _render_model_panel_content(model_slot: DeltaGenerator) -> None:
                 details=str(e),
             )
 
-
 async def _refresh_model_panel(model_slot: Optional[DeltaGenerator]) -> None:
     if model_slot is None:
         return
@@ -615,10 +623,11 @@ async def _refresh_model_panel(model_slot: Optional[DeltaGenerator]) -> None:
             if loaded_model:
                 st.session_state["model"] = loaded_model
 
-                if loaded_model.get("elements"):
-                    root: dict[str, Any] = loaded_model["elements"][0]
-                    st.session_state["ID"] = root.get("ID")
-                    st.session_state["package"] = root.get("package")
+                elements = _get_val(loaded_model, "elements")
+                if elements and isinstance(elements, list):
+                    root_elem = elements[0]
+                    st.session_state["ID"] = _get_val(root_elem, "ID")
+                    st.session_state["package"] = _get_val(root_elem, "package")
 
         st.session_state["_model_render_prefix"] = _new_model_render_prefix()
         model_slot.empty()
@@ -630,7 +639,6 @@ async def _refresh_model_panel(model_slot: Optional[DeltaGenerator]) -> None:
             "A critical error occurred while refreshing the model visualisation.",
             details=str(e),
         )
-
 
 async def _render_model_panel() -> Optional[DeltaGenerator]:
     is_generating = st.session_state.get("_generating", False)
@@ -674,13 +682,11 @@ async def _render_model_panel() -> Optional[DeltaGenerator]:
     await _render_model_panel_content(model_slot)
     return model_slot
 
-
 def _render_page_bottom_guard(height_px: int = 56) -> None:
     st.markdown(
         f"<div style='height: {height_px}px; width: 100%;'></div>",
         unsafe_allow_html=True,
     )
-
 
 async def _render_chat_panel(
     user_input: Optional[str] = None,
@@ -706,7 +712,6 @@ async def _render_chat_panel(
 
             st.rerun()
 
-
 def _set_active_history(history: ChatHistory, reset_model: bool = True) -> None:
     st.session_state["history"] = history
     st.session_state["user"] = history.user
@@ -722,7 +727,6 @@ def _set_active_history(history: ChatHistory, reset_model: bool = True) -> None:
         st.session_state.pop("package", None)
         st.session_state["_model_render_prefix"] = _new_model_render_prefix()
 
-
 def _open_or_create_history(user: str, session_name: str) -> ChatHistory:
     existed = ChatHistory.session_exists(user, session_name)
     history = ChatHistory(user=user, name=session_name)
@@ -732,6 +736,55 @@ def _open_or_create_history(user: str, session_name: str) -> ChatHistory:
 
     _set_active_history(history, reset_model=True)
     return history
+
+
+# ----------------------------------------------------------------------
+# Fetch function for tags calling MCP Tool 
+# ----------------------------------------------------------------------
+def _fetch_tags() -> list[Any]:
+    """
+    Récupère les tags disponibles dynamiquement depuis le serveur MCP.
+    """
+    mcp_client = st.session_state.get("mcp_client")
+    if not mcp_client:
+        return []
+
+    async def _do_fetch():
+        async with mcp_client as wrapper:
+            if hasattr(wrapper, "client") and wrapper.client is not None:
+                return await wrapper.client.call_tool("get_available_tags", arguments={})
+            return None
+
+    try:
+        result = asyncio.run(_do_fetch())
+        
+        # Extraction du texte brute depuis la réponse MCP (CallToolResult)
+        text_result = ""
+        if hasattr(result, "content"):
+            text_result = "".join(getattr(c, "text", "") for c in (result.content or []))
+
+        # Parsing robuste
+        if text_result:
+            parsed = None
+            try:
+                parsed = loads(text_result)
+            except Exception:
+                try:
+                    parsed = ast.literal_eval(text_result)
+                except Exception:
+                    pass
+            
+            # Extraction de la liste depuis le dictionnaire {"tags": [...]}
+            if isinstance(parsed, dict) and "tags" in parsed:
+                return parsed["tags"]
+            if isinstance(parsed, list):
+                return parsed
+
+    except Exception as e:
+        logger.warning(f"Impossible de charger les tags via MCP: {e}")
+
+    # Renvoie une liste vide par défaut pour ne pas polluer l'interface
+    return []
 
 
 # ----------------------------------------------------------------------
@@ -779,17 +832,50 @@ def data_modelling_chat_tab(server: str) -> None:
             model_slot = asyncio.run(_render_model_panel())
 
         with col_chat:
+            is_generating = st.session_state.get("_generating", False)
+
+            filter_spacer, filter_col = st.columns([6.5, 2.5], vertical_alignment="center")
+
+            with filter_col:
+                with st.popover("🏷️ Filtres", disabled=is_generating, use_container_width=True):
+                    st.write("**Filtrer la recherche :**")
+
+                    available_tags = _fetch_tags()
+
+                    if not available_tags:
+                        st.info("Aucun tag")
+                    else:
+                        # Initialisation par défaut : tout cocher au premier chargement
+                        if not st.session_state.get("_tags_initialized", False):
+                            noms_des_tags = [_get_val(t, "tag", "") for t in available_tags]
+                            st.session_state["selected_tags"] = ["schema.data.gouv"] if "schema.data.gouv" in noms_des_tags else []
+                            st.session_state["_tags_initialized"] = True
+
+                        new_selected_tags = []
+                        for i, t in enumerate(available_tags):
+                            # Utilisation de l'outil sécurisé pour lire le dictionnaire ou l'objet
+                            tag_name = _get_val(t, "tag", "Inconnu")
+
+                            is_checked = st.checkbox(
+                                f"{tag_name}",
+                                value=(tag_name in st.session_state["selected_tags"]),
+                                key=f"ui_filter_tag_{i}_{tag_name}",
+                            )
+                            if is_checked:
+                                new_selected_tags.append(tag_name)
+
+                        st.session_state["selected_tags"] = new_selected_tags
+
+            # --- Zone du chat ---
             chat_container = st.container()
 
-        is_generating = st.session_state.get("_generating", False)
-
+        # --- Barre de texte centrée sur la page (hors des colonnes principales) ---
         input_left, input_center, input_right = st.columns([1, 6, 1])
 
         with input_center:
             user_input = st.chat_input(
                 "Génération en cours..." if is_generating else "Votre message",
                 key="xmi_chat_input",
-                width="stretch",
                 disabled=is_generating,
             )
 
