@@ -17,7 +17,6 @@ from .import_xml import xml_to_json
 from .export_xml import json_to_xml
 from .visualisation import get_image_bytes
 from .export_ttl import jsonld_to_ttl_bytes
-from .import_frictionless import frictionless_to_json
 
 
 # ----------------------------------------------------------------------
@@ -84,7 +83,7 @@ async def with_timeout(coro, seconds: float = 60.0, on_timeout_msg: str = ""):
 def _detect_file_type(
     first_bytes: bytes,
     filename: Optional[str] = None,
-) -> Optional[Literal["xml", "ttl", "xmi", "frictionless"]]:
+) -> Optional[Literal["xml", "ttl", "xmi"]]:
     """
     Detect file type from filename first, then from content.
     """
@@ -96,16 +95,11 @@ def _detect_file_type(
             return "xmi"
         if suffix == ".xml":
             return "xml"
-        if suffix == ".json":
-            return "frictionless"
 
     sniff = first_bytes[:512].lstrip()
 
     if sniff.startswith(b"<") or sniff.startswith(b"<?xml"):
         return "xml"
-        
-    if sniff.startswith(b"{"):
-        return "frictionless"
 
     turtle_markers = (
         b"@prefix",
@@ -131,7 +125,7 @@ def _get_model_name(default: str = "export") -> str:
 
 def _normalize_uploaded_model(
     *,
-    kind: Literal["xml", "xmi", "ttl", "frictionless"],
+    kind: Literal["xml", "xmi", "ttl"],
     uploaded_json: dict[str, Any],
     server_model: Optional[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -146,24 +140,6 @@ def _normalize_uploaded_model(
 
         if uploaded_json.get("ttl") and not model.get("ttl"):
             model["ttl"] = uploaded_json["ttl"]
-
-        if not model.get("elements") and uploaded_json.get("elements"):
-            model["elements"] = uploaded_json.get("elements", [])
-
-        if not model.get("connectors") and uploaded_json.get("connectors"):
-            model["connectors"] = uploaded_json.get("connectors", [])
-
-        if not isinstance(model.get("xmi"), dict):
-            model["xmi"] = {
-                "elements": model.get("elements", []),
-                "connectors": model.get("connectors", []),
-            }
-
-        return model
-
-    if kind == "frictionless":
-        model.setdefault("source_format", "frictionless")
-        model.setdefault("frictionless_raw", uploaded_json.get("frictionless_raw", ""))
 
         if not model.get("elements") and uploaded_json.get("elements"):
             model["elements"] = uploaded_json.get("elements", [])
@@ -255,13 +231,13 @@ def _build_xmi_bytes(json_data: dict[str, Any]) -> bytes:
 # ----------------------------------------------------------------------
 async def upload_xml(uploaded_file: BytesIO) -> dict[str, Any]:
     """
-    Imports an XML/XMI, TTL or JSON (Frictionless) file uploaded by the user and converts it to
+    Imports an XML/XMI or TTL file uploaded by the user and converts it to
     a JSON-compatible dictionary.
 
     If XML/XMI, adds a 'Generated' package for further modifications, and uploads
     to the MCP server.
 
-    If TTL or Frictionless, preserves the raw format so that export remains available later.
+    If TTL, preserves ttl_raw so that TTL export remains available later.
     """
     try:
         if "mcp_client" not in st.session_state or st.session_state["mcp_client"] is None:
@@ -278,7 +254,7 @@ async def upload_xml(uploaded_file: BytesIO) -> dict[str, Any]:
         if kind is None:
             show_user_error(
                 "Unsupported file format.",
-                "Please upload an XMI/XML, TTL or JSON (Frictionless) file."
+                "Please upload an XMI/XML or TTL file."
             )
             return {}
 
@@ -324,20 +300,7 @@ async def upload_xml(uploaded_file: BytesIO) -> dict[str, Any]:
             json_data["xmi_raw"] = file_bytes.decode("utf-8", errors="replace")
             json_data["xmi_xml"] = json_data["xmi_raw"]
 
-        elif kind == "frictionless":
-            try:
-                json_data = frictionless_to_json(BytesIO(file_bytes))
-            except Exception as e:
-                show_user_error("Failed to parse the Frictionless JSON file.", details=str(e))
-                return {}
-
-            json_data["source_format"] = "frictionless"
-            # elements et connectors sont déjà encapsulés dans "xmi" grâce à frictionless_to_json
-            if "xmi" in json_data:
-                json_data["elements"] = json_data["xmi"].get("elements", [])
-                json_data["connectors"] = json_data["xmi"].get("connectors", [])
-
-        else: # TTL
+        else:
             try:
                 json_data = ttl_to_json(BytesIO(file_bytes))
             except Exception as e:
