@@ -848,7 +848,7 @@ def data_modelling_chat_tab(server: str) -> None:
                         # Initialisation par défaut : tout cocher au premier chargement
                         if not st.session_state.get("_tags_initialized", False):
                             noms_des_tags = [_get_val(t, "tag", "") for t in available_tags]
-                            st.session_state["selected_tags"] = ["schema.data.gouv"] if "schema.data.gouv" in noms_des_tags else []
+                            st.session_state["selected_tags"] = ["schema.data.gouv.fr"] if "schema.data.gouv.fr" in noms_des_tags else []
                             st.session_state["_tags_initialized"] = True
 
                         new_selected_tags = []
