@@ -11,14 +11,6 @@ SERVER = config["MCP-server"]["local"]
 
 from chat_interface import data_modelling_chat_tab
 
-try:
-    st.session_state.setdefault("add_env", True)
-    if st.session_state["add_env"]:
-        st.session_state["add_env"] = False
-        os.environ.update(st.secrets)
-except Exception as e:
-    st.warning(f"Could not apply secrets to environment: {e}")
-
 st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
