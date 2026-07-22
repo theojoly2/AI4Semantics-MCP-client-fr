@@ -183,7 +183,7 @@ def data_modelling_chat_tab(server: str) -> None:
     if "history" not in st.session_state or st.session_state["history"] is None:
         st.session_state["history"] = ChatHistory(
             user=st.session_state["user"],
-            session=st.session_state["name"],
+            name=st.session_state["name"],
         )
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
