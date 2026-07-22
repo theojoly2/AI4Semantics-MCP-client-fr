@@ -55,7 +55,7 @@ div[data-testid="stDecoration"] {
 </style>
 """, unsafe_allow_html=True)
 
-tab1, *_ = st.tabs(["Data Model chat"])
+tab1, *_ = st.tabs(["GlossaryAI chat"])
 
 with tab1:
     try:

@@ -1,11 +1,14 @@
-Bienvenue sur votre plateforme de gestion de modèles de données ! 🚀
+Bienvenue sur GlossaryAI ! 🚀
 
-Je suis votre assistant IA, actuellement en phase de preuve de concept (POC). 
+Je suis votre assistant IA spécialisé en vocabulaires, glossaires et textes juridiques/réglementaires.
+
 Voici ce que vous pouvez déjà faire :
-- **Exploration interactive** : interrogez des standards de données (schema.data.gouv) en langage naturel.
-- **Import de fichiers** : chargez vos fichiers XMI (Enterprise Architect ou Papyrus) ou vos ontologies OWL en Turtle pour analyse.
-- **Modification du modèle** : demandez-moi des évolutions de votre modèle de données (ontologie OWL ou UML).
-- **Visualisation** : explorez votre modèle directement dans l'interface.
-- **Export** : renvoyez votre modèle modifié vers Enterprise Architect/Papyrus ou en fichier .ttl.
+- **Rechercher un terme** : posez une question sur un mot ou un concept métier.
+- **Retrouver une définition** : demandez la définition d'un terme dans les glossaires indexés.
+- **Explorer des articles juridiques** : interrogez des articles de lois, règlements ou directives.
+- **Comparer des définitions** : demandez-moi de comparer ou converger plusieurs définitions de sources différentes.
+- **Filtrer par source** : utilisez la barre latérale pour ne chercher que dans certaines sources.
 
-Ensemble, façonnons l'avenir de la modélisation de données ! 🌱
+Chaque réponse s'appuie sur les documents que vous avez indexés et cite ses sources.
+
+Commencez par poser votre question ! 🌱

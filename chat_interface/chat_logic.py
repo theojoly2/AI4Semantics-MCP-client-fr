@@ -23,7 +23,6 @@ from openai.types.chat import (
 )
 from openai.resources.chat.completions import AsyncCompletions
 from chat_history import ChatHistory
-from .data_model_utils.chat_data_structure import shorten_json
 
 
 # ----------------------------------------------------------------------
@@ -225,26 +224,6 @@ def _render_live_chat_events_in(slot: DeltaGenerator) -> None:
                     )
 
 
-def _build_current_model_prompt(model: Any) -> str:
-    if model and "elements" in model:
-        return "\n".join([
-            "[CURRENT MODEL]",
-            str(shorten_json(model)),
-            "",
-            "[CURRENT USER MESSAGE]",
-            "",
-        ])
-
-    if model and "ttl" in model:
-        return "\n".join([
-            "[CURRENT MODEL]",
-            str(model["ttl"]),
-            "",
-            "[CURRENT USER MESSAGE]",
-            "",
-        ])
-
-    return ""
 
 
 def _extract_delta_content(delta: Any) -> str:
@@ -464,30 +443,8 @@ async def _create_completion_streaming(
 # ----------------------------------------------------------------------
 def set_chatbox_layout() -> None:
     """
-    Sets up the chat interface layout in Streamlit, including message display and UI fixes.
-    Displays the UI conversation history only (not the LLM summarized memory).
+    Minimal layout setup for GlossaryAI chat interface.
     """
-    st.title("Model Bot")
-
-    history = st.session_state.get("history")
-    if not history:
-        return
-
-    for msg in history.display_messages:
-        role = msg.get("role")
-        content = msg.get("content")
-
-        if role == "user" and content:
-            with st.chat_message("user"):
-                st.write(content)
-
-        elif role == "assistant" and content:
-            with st.chat_message("assistant"):
-                st.write(content)
-
-        elif role == "tool" and content:
-            _render_tool_output(content)
-
     st.markdown(
         """
         <style>
@@ -521,11 +478,10 @@ def set_chatbox_layout() -> None:
 # ----------------------------------------------------------------------
 async def process_user_input(
     user_input: str | None,
-    on_model_mutation: Optional[Callable[[str, Any], Awaitable[None]]] = None,
+    mcp_client: MCPClient | None = None,
     on_thinking_start: Optional[Callable[[], Awaitable[None]]] = None,
     on_assistant_stream_start: Optional[Callable[[], Awaitable[None]]] = None,
     on_assistant_stream_end: Optional[Callable[[bool], Awaitable[None]]] = None,
-    tool_output_area: Optional[DeltaGenerator] = None,
 ) -> None:
     """
     Handles user input, generates LLM responses, and processes tool calls in the chat interface.
@@ -610,10 +566,10 @@ async def process_user_input(
         history.start_new_request(user_input)
         history.add_user_message(user_input)
 
-        model = st.session_state.get("model", {})
-        model_prompt = _build_current_model_prompt(model)
+        if mcp_client is None:
+            mcp_client = st.session_state.get("mcp_client")
 
-        async with st.session_state["mcp_client"] as mcp_client:
+        async with mcp_client:
             await _begin_thinking()
             tools = await with_timeout(
                 mcp_client.tools(),
@@ -637,7 +593,7 @@ async def process_user_input(
 
                 llm_messages = history.build_messages_for_llm(
                     current_user_input=user_input,
-                    current_model_prompt=model_prompt,
+                    current_model_prompt="",
                 )
 
                 streamed_response = await with_timeout(
@@ -741,39 +697,6 @@ async def process_user_input(
                                 raw_arguments_text=raw_arguments_text,
                             )
 
-                            if on_model_mutation is not None:
-                                try:
-                                    await on_model_mutation(name, parsed_tool or tool_message)
-                                except Exception as e:
-                                    logger.exception(
-                                        "Model refresh callback failed after tool '%s': %s",
-                                        name,
-                                        e,
-                                    )
-
-                            if name == "style_guide_check":
-                                try:
-                                    report = parsed_tool.get("tool_results", {}).get("report", "")
-
-                                    if report:
-                                        _append_live_event("assistant", report)
-                                        _rerender_live()
-                                        history.add_assistant_message(report)
-                                    else:
-                                        _append_live_event("assistant", "Style guide check completed.")
-                                        _rerender_live()
-
-                                    await _end_assistant_stream(False)
-                                    loop = False
-
-                                except Exception as e:
-                                    show_user_error(
-                                        "A critical error occurred while displaying the style guide report.",
-                                        details=str(e),
-                                    )
-                                    _append_assistant_error_event(f"⚠️ Style guide display error: {e}")
-                                    _rerender_live()
-                                    return
 
                         except Exception as e:
                             show_user_error(

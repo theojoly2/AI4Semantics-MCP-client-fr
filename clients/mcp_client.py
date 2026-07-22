@@ -6,43 +6,26 @@ import logging
 from contextlib import AsyncExitStack
 from json import loads, dumps
 from os import environ
-from typing import Any, Callable, Mapping, Optional, Set
+from typing import Any, Mapping, Optional, Set
 
 
 import streamlit as st
 from openai.resources.chat.completions import AsyncCompletions
 from openai.types.chat import ChatCompletionToolParam
 from openai.types.shared_params import FunctionDefinition
-from uuid import uuid4
 
 
 from fastmcp import Client
 
 """
-Streamlit app with robust error handling for FastMCP + OpenAI async completions.
-
-
-What users will see on error:
-- A clear, actionable message:
-  1) Review inputs and fix the issue if possible
-  2) Re-launch the UI
-  3) If errors persist, contact the tech team at CONTACT_EMAIL
-
-
-Replace CONTACT_EMAIL with your real support address when ready.
+GlossaryAI client MCP wrapper.
 """
 
 
-# ----------------------------------------------------------------------
-# Configuration
-# ----------------------------------------------------------------------
 CONTACT_EMAIL = "theo.joly2@developpement-durable.gouv.fr"
 LOGGER_NAME = "fastmcp_ui"
 
 
-# ----------------------------------------------------------------------
-# Logging setup
-# ----------------------------------------------------------------------
 logger = logging.getLogger(LOGGER_NAME)
 logger.setLevel(logging.INFO)
 if not logger.handlers:
@@ -53,16 +36,7 @@ if not logger.handlers:
     logger.addHandler(_handler)
 
 
-# ----------------------------------------------------------------------
-# Argument normalization helpers
-# ----------------------------------------------------------------------
 def _normalize_list_arg(value: Any) -> list:
-    """
-    Normalize an argument that should be a list.
-    - If already a list, return as-is.
-    - If a string like "None", "null", "", or whitespace → return [].
-    - Otherwise → return [].
-    """
     if isinstance(value, list):
         return value
     if isinstance(value, str):
@@ -73,12 +47,6 @@ def _normalize_list_arg(value: Any) -> list:
 
 
 def _normalize_str_arg(value: Any, default: str = "") -> str:
-    """
-    Normalize an argument that should be a string.
-    - If a string, strip whitespace. If it's "None", "null", or empty → return default.
-    - If None → return default.
-    - Otherwise, convert to string and strip.
-    """
     if isinstance(value, str):
         cleaned = value.strip()
         if not cleaned or cleaned.lower() in {"none", "null"}:
@@ -90,12 +58,6 @@ def _normalize_str_arg(value: Any, default: str = "") -> str:
 
 
 def _normalize_int_arg(value: Any, default: int = 10) -> int:
-    """
-    Normalize an argument that should be an int.
-    - If already an int, return as-is.
-    - If a string, strip and try to parse. If empty or "None" → return default.
-    - Otherwise → return default.
-    """
     if isinstance(value, int):
         return value
     if isinstance(value, str):
@@ -125,11 +87,7 @@ def _normalize_bool_arg(value: Any, default: bool = True) -> bool:
     return default
 
 
-# ----------------------------------------------------------------------
-# UI error helpers
-# ----------------------------------------------------------------------
-def safe_json_loads(text: Optional[str]) -> dict:
-    """Parse JSON safely, returning {} on failure and logging the error."""
+def safe_json_loads(text: Optional[str]) -> Any:
     if not text:
         return {}
     try:
@@ -144,9 +102,6 @@ def show_user_error(
     details: Optional[str] = None,
     contact_email: str = CONTACT_EMAIL,
 ):
-    """
-    Show a clear, actionable error in the Streamlit UI.
-    """
     try:
         with st.status(title, expanded=True, state="error") as status:
             if details:
@@ -171,7 +126,6 @@ def show_user_error(
 
 
 async def with_timeout(coro, seconds: float = 30.0, *, on_timeout_msg: str = ""):
-    """Run an async coroutine with a timeout and surface a user message if it times out."""
     try:
         return await asyncio.wait_for(coro, timeout=seconds)
     except asyncio.TimeoutError:
@@ -182,16 +136,7 @@ async def with_timeout(coro, seconds: float = 30.0, *, on_timeout_msg: str = "")
         return None
 
 
-# ----------------------------------------------------------------------
-# Progress bar factory
-# ----------------------------------------------------------------------
 def make_progress_handler():
-    """
-    Create a fresh progress bar placeholder anchored to the *current* DOM
-    position (i.e. just below the latest chat message) and return:
-      - the async handler to pass to the FastMCP Client
-      - a cleanup callable to call after the tool finishes
-    """
     placeholder = st.empty()
 
     async def _handler(progress: float, total: float | None, message: str | None) -> None:
@@ -206,7 +151,6 @@ def make_progress_handler():
                 )
         else:
             placeholder.progress(0, text=f"Step {int(progress)}…  {message or ''}".strip())
-
         logger.debug("Progress: %s / %s — %s", progress, total, message)
 
     def _clear():
@@ -215,14 +159,7 @@ def make_progress_handler():
     return _handler, _clear
 
 
-# ----------------------------------------------------------------------
-# Sampling handler (server -> client LLM request)
-# ----------------------------------------------------------------------
 async def sampling_handler(messages, params, context) -> str:
-    """
-    Bridges MCP sampling -> OpenAI Chat Completions.
-    Called automatically when the server triggers ctx.sample(...).
-    """
     try:
         openai_messages: list[dict[str, str]] = []
         if getattr(params, "systemPrompt", None):
@@ -267,28 +204,17 @@ async def sampling_handler(messages, params, context) -> str:
         return ""
 
 
-# ----------------------------------------------------------------------
-# MCPClient
-# ----------------------------------------------------------------------
 class MCPClient:
     """
-    Prefect FastMCP-compatible client wrapper.
+    FastMCP client wrapper for GlossaryAI.
     """
 
     EXPOSED_TOOLS: Set[str] = {
         "retrieve_documents",
-        "add_class",
-        "add_attribute",
-        "add_connector",
+        "get_available_tags",
         "plan_workflow_with_tools",
-        "metadata_checker",
-        "reuse_check",
-        "validator_check",
-        "style_guide_check",
-    }
-
-    RESERVED_ARGUMENTS: Set[str] = {
-        "user", "name", "package", "uri",
+        "resolve_links",
+        "compare_concepts",
     }
 
     def __init__(
@@ -323,20 +249,12 @@ class MCPClient:
             logger.exception("__aexit__ failed: %s", e)
             show_user_error("Failed to close the MCP session cleanly.", details=str(e))
 
-    # ------------------------------------------------------------------
-    # Core helper: run a tool call with a freshly positioned progress bar
-    # ------------------------------------------------------------------
     async def _call_with_progress(
         self,
         tool_name: str,
         arguments: dict[str, Any],
         timeout: float = 3000.0,
     ) -> Any:
-        """
-        Create a fresh progress bar placeholder at the current DOM position,
-        open a short-lived FastMCP Client session with that handler, execute
-        the tool call, then clean up the placeholder.
-        """
         progress_handler, clear_progress = make_progress_handler()
 
         progress_client = Client(
@@ -355,9 +273,6 @@ class MCPClient:
         finally:
             clear_progress()
 
-    # ------------------------------------------------------------------
-    # Tool exposure for OpenAI
-    # ------------------------------------------------------------------
     async def tools(self) -> list[ChatCompletionToolParam]:
         assert self.client is not None, "MCP client not initialized"
         try:
@@ -388,9 +303,6 @@ class MCPClient:
             show_user_error("Failed to load tools from the server.", details=str(e))
             return []
 
-    # ------------------------------------------------------------------
-    # Generic tool dispatcher
-    # ------------------------------------------------------------------
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
         logger.info("[CLIENT] call_tool triggered for tool: %s", name)
         logger.info("[CLIENT] Arguments received: %s", arguments)
@@ -403,7 +315,7 @@ class MCPClient:
                     f"Tool '{name}' is not exposed. Allowed: {MCPClient.EXPOSED_TOOLS}"
                 )
 
-            tool_func: Optional[Callable[[dict[str, Any]], Any]] = getattr(self, f"_{name}", None)
+            tool_func = getattr(self, f"_{name}", None)
             if not callable(tool_func):
                 raise AttributeError(f"No client wrapper implemented for '{name}'")
 
@@ -416,10 +328,6 @@ class MCPClient:
 
         logger.info("[CLIENT] Payload: %s", payload)
         return dumps(payload)
-
-    # ------------------------------------------------------------------
-    # Tool wrappers
-    # ------------------------------------------------------------------
 
     async def _retrieve_documents(self, payload: dict[str, Any]) -> dict[str, Any]:
         assert self.client is not None, "MCP client not initialized"
@@ -441,8 +349,12 @@ class MCPClient:
                 arguments.get("return_full_document"),
                 default=True,
             ),
-            "tags": self.state.get("selected_tags", [])
+            "tags": self.state.get("selected_tags", []),
+            "document_filter": _normalize_str_arg(arguments.get("document_filter"), default=""),
         }
+        if not call_args["document_filter"]:
+            call_args.pop("document_filter")
+
         payload["tool_arguments"] = call_args
 
         try:
@@ -455,11 +367,7 @@ class MCPClient:
             if content and getattr(content[0], "type", "") == "text":
                 raw_text = getattr(content[0], "text", "") or ""
                 parsed = safe_json_loads(raw_text)
-
-                if parsed is None:
-                    payload["tool_results"] = {"raw": raw_text}
-                else:
-                    payload["tool_results"] = parsed
+                payload["tool_results"] = parsed if parsed is not None else {"raw": raw_text}
             else:
                 payload["tool_results"] = {}
 
@@ -470,147 +378,106 @@ class MCPClient:
 
         return payload
 
-    async def _add_class(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _get_available_tags(self, payload: dict[str, Any]) -> dict[str, Any]:
         assert self.client is not None, "MCP client not initialized"
-        arguments = payload.get("tool_arguments", {})
-
-        required = {"title", "definition", "usage_note"}
-        missing = [arg for arg in required if arg not in arguments or not arguments[arg]]
-        if missing:
-            show_user_error(f"Missing required arguments for add_class: {missing}.")
-            return payload
-
-        call_args = {
-            "user": _normalize_str_arg(self.state.get("user"), default=""),
-            "name": _normalize_str_arg(self.state.get("name"), default=""),
-            "package": _normalize_str_arg(self.state.get("package", ""), default=""),
-            "uri": _normalize_str_arg(
-                arguments.get("uri"),
-                default="",           # le serveur génère urn:class:{slug} si absent
-            ),
-            "title": _normalize_str_arg(arguments["title"], default=""),
-            "definition": _normalize_str_arg(arguments["definition"], default=""),
-            "usage_note": _normalize_str_arg(arguments["usage_note"], default=""),
-        }
-        payload["tool_arguments"] = call_args
 
         try:
-            res = await self._call_with_progress("add_class", call_args)
-            if res is None:
+            result = await self._call_with_progress("get_available_tags", {})
+            if result is None:
+                payload["tool_results"] = []
+                return payload
+
+            content = getattr(result, "content", [])
+            if content and getattr(content[0], "type", "") == "text":
+                raw_text = getattr(content[0], "text", "") or ""
+                parsed = safe_json_loads(raw_text)
+                payload["tool_results"] = parsed if parsed is not None else {"raw": raw_text}
+            else:
                 payload["tool_results"] = {}
-                return payload
 
-            if getattr(res, "data", None) is not None:
-                payload["tool_results"] = res.data if isinstance(res.data, dict) else {}
-                return payload
-
-            text = "".join(getattr(b, "text", "") for b in (res.content or []))
-            payload["tool_results"] = safe_json_loads(text)
         except Exception as e:
-            logger.exception("_add_class failed: %s", e)
-            show_user_error("Could not add the class.", details=str(e))
+            logger.exception("_get_available_tags failed: %s", e)
+            show_user_error("Could not fetch available tags.", details=str(e))
             payload["tool_results"] = {}
 
         return payload
 
-    async def _add_attribute(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _resolve_links(self, payload: dict[str, Any]) -> dict[str, Any]:
         assert self.client is not None, "MCP client not initialized"
-        arguments = payload.get("tool_arguments", {})
 
-        required = {"class_name", "attr_label", "attr_definition", "attr_uri"}
-        missing = [arg for arg in required if arg not in arguments or not arguments[arg]]
-        if missing:
-            show_user_error(f"Missing required arguments for add_attribute: {missing}.")
+        arguments = payload.get("tool_arguments") or {}
+        if not isinstance(arguments, dict):
+            arguments = {}
+
+        chunks = arguments.get("chunks")
+        if not chunks or not isinstance(chunks, list):
+            show_user_error("Missing or invalid required argument 'chunks' for resolve_links.")
+            payload["tool_results"] = {}
             return payload
 
         call_args = {
-            "user": _normalize_str_arg(self.state.get("user"), default=""),
-            "name": _normalize_str_arg(self.state.get("name"), default=""),
-            "class_name": _normalize_str_arg(arguments["class_name"], default=""),
-            "attr_label": _normalize_str_arg(arguments["attr_label"], default=""),
-            "attr_definition": _normalize_str_arg(arguments["attr_definition"], default=""),
-            "attr_uri": _normalize_str_arg(
-                arguments.get("attr_uri"),
-                default=f"http://example.com/{_normalize_str_arg(arguments.get('attr_label'),
-                                                                 default='attribute')}",
-            ),
-            "attr_usage_note": _normalize_str_arg(arguments.get("attr_usage_note"), default=""),
-            "attr_type": _normalize_str_arg(arguments.get("attr_type"), default=""),
+            "chunks": chunks,
+            "max_depth": _normalize_int_arg(arguments.get("max_depth"), default=1),
         }
         payload["tool_arguments"] = call_args
 
         try:
-            res = await self._call_with_progress("add_attribute", call_args)
-            if res is None:
+            result = await self._call_with_progress("resolve_links", call_args)
+            if result is None:
                 payload["tool_results"] = {}
                 return payload
 
-            if getattr(res, "data", None) is not None:
-                payload["tool_results"] = res.data if isinstance(res.data, dict) else {}
-                return payload
+            content = getattr(result, "content", [])
+            if content and getattr(content[0], "type", "") == "text":
+                raw_text = getattr(content[0], "text", "") or ""
+                parsed = safe_json_loads(raw_text)
+                payload["tool_results"] = parsed if parsed is not None else {"raw": raw_text}
+            else:
+                payload["tool_results"] = {}
 
-            text = "".join(getattr(b, "text", "") for b in (res.content or []))
-            payload["tool_results"] = safe_json_loads(text)
         except Exception as e:
-            logger.exception("_add_attribute failed: %s", e)
-            show_user_error("Could not add the attribute.", details=str(e))
+            logger.exception("_resolve_links failed: %s", e)
+            show_user_error("Could not resolve links.", details=str(e))
             payload["tool_results"] = {}
 
         return payload
 
-    async def _add_connector(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _compare_concepts(self, payload: dict[str, Any]) -> dict[str, Any]:
         assert self.client is not None, "MCP client not initialized"
-        arguments = payload.get("tool_arguments", {})
 
-        required = {"source_name", "target_name", "rel_label", "rel_definition", "rel_uri",
-                    "relationship"}
-        missing = [arg for arg in required if arg not in arguments or not arguments[arg]]
-        if missing:
-            show_user_error(f"Missing required arguments for add_connector: {missing}.")
+        arguments = payload.get("tool_arguments") or {}
+        if not isinstance(arguments, dict):
+            arguments = {}
+
+        terms = arguments.get("terms")
+        if not terms or not isinstance(terms, list):
+            show_user_error("Missing or invalid required argument 'terms' for compare_concepts.")
+            payload["tool_results"] = {}
             return payload
 
         call_args = {
-            "user": _normalize_str_arg(self.state.get("user"), default=""),
-            "name": _normalize_str_arg(self.state.get("name"), default=""),
-            "source_name": _normalize_str_arg(arguments.get("source_name"), default=""),
-            "target_name": _normalize_str_arg(arguments.get("target_name"), default=""),
-            "rel_label": _normalize_str_arg(arguments.get("rel_label"), default=""),
-            "rel_definition": _normalize_str_arg(arguments.get("rel_definition"), default=""),
-            "rel_uri": _normalize_str_arg(
-                arguments.get("rel_uri"),
-                default=f"http://example.com/{_normalize_str_arg(arguments.get('rel_label'),
-                                                                 default='relation')}",
-            ),
-            "relationship": _normalize_str_arg(arguments.get("relationship"),
-                                               default="Association"),
-
-            # cardinalités
-            "lb": _normalize_str_arg(arguments.get("lb"), default=""),
-            "rb": _normalize_str_arg(arguments.get("rb"), default=""),
-
-            # rôles
-            "lt": _normalize_str_arg(arguments.get("lt"), default=""),
-            "rt": _normalize_str_arg(arguments.get("rt"), default=""),
-
-            "rel_usage_note": _normalize_str_arg(arguments.get("rel_usage_note"), default=""),
+            "terms": terms,
+            "limit": _normalize_int_arg(arguments.get("limit"), default=5),
         }
         payload["tool_arguments"] = call_args
 
         try:
-            res = await self._call_with_progress("add_connector", call_args)
-            if res is None:
+            result = await self._call_with_progress("compare_concepts", call_args)
+            if result is None:
                 payload["tool_results"] = {}
                 return payload
 
-            if getattr(res, "data", None) is not None:
-                payload["tool_results"] = res.data if isinstance(res.data, dict) else {}
-                return payload
+            content = getattr(result, "content", [])
+            if content and getattr(content[0], "type", "") == "text":
+                raw_text = getattr(content[0], "text", "") or ""
+                parsed = safe_json_loads(raw_text)
+                payload["tool_results"] = parsed if parsed is not None else {"raw": raw_text}
+            else:
+                payload["tool_results"] = {}
 
-            text = "".join(getattr(b, "text", "") for b in (res.content or []))
-            payload["tool_results"] = safe_json_loads(text)
         except Exception as e:
-            logger.exception("_add_connector failed: %s", e)
-            show_user_error("Could not add the connector.", details=str(e))
+            logger.exception("_compare_concepts failed: %s", e)
+            show_user_error("Could not compare concepts.", details=str(e))
             payload["tool_results"] = {}
 
         return payload
@@ -651,247 +518,3 @@ class MCPClient:
             payload["tool_results"] = {}
 
         return payload
-
-    async def _metadata_checker(self, payload: dict[str, Any]) -> dict[str, Any]:
-        assert self.client is not None, "MCP client not initialized"
-        arguments = payload.get("tool_arguments", {})
-
-        call_args = {
-            "user": _normalize_str_arg(self.state.get("user"), default=""),
-            "name": _normalize_str_arg(self.state.get("name"), default=""),
-            "target_names": _normalize_list_arg(arguments.get("target_names")),
-            "check_instruction": _normalize_str_arg(arguments.get("check_instruction"), default=""),
-        }
-        payload["tool_arguments"] = call_args
-
-        try:
-            res = await self._call_with_progress("metadata_checker", call_args)
-            logger.info("metadata_checker results: %s", res)
-
-            if res is None:
-                self.tool_results["metadata_checker"] = {}
-                payload["tool_results"] = {}
-                return payload
-
-            if getattr(res, "data", None) is not None and isinstance(res.data, dict):
-                self.tool_results["metadata_checker"] = res.data
-                payload["tool_results"] = res.data
-                return payload
-
-            text = "".join(getattr(b, "text", "") for b in (res.content or []))
-            parsed = safe_json_loads(text)
-            self.tool_results["metadata_checker"] = parsed
-            payload["tool_results"] = parsed
-        except Exception as e:
-            logger.exception("_metadata_checker failed: %s", e)
-            show_user_error("Metadata check failed.", details=str(e))
-            self.tool_results["metadata_checker"] = {}
-            payload["tool_results"] = {}
-
-        return payload
-
-    async def _reuse_check(self, payload: dict[str, Any]) -> dict[str, Any]:
-        assert self.client is not None, "MCP client not initialized"
-        arguments = payload.get("tool_arguments", {})
-
-        target_names = _normalize_list_arg(arguments.get("target_names"))
-
-        call_args = {
-            "user": _normalize_str_arg(self.state.get("user"), default=""),
-            "name": _normalize_str_arg(self.state.get("name"), default=""),
-            "n_documents": _normalize_int_arg(arguments.get("n_documents"), default=10),
-            "target_names": target_names if target_names else None,
-        }
-        payload["tool_arguments"] = call_args
-
-        try:
-            res = await self._call_with_progress("reuse_check", call_args)
-            if res is None:
-                self.tool_results["reuse_check"] = {}
-                payload["tool_results"] = {}
-                return payload
-
-            if getattr(res, "data", None) is not None and isinstance(res.data, dict):
-                self.tool_results["reuse_check"] = res.data
-                payload["tool_results"] = res.data
-                return payload
-
-            text = "".join(getattr(b, "text", "") for b in (res.content or []))
-            parsed = safe_json_loads(text)
-            self.tool_results["reuse_check"] = parsed
-            payload["tool_results"] = parsed
-        except Exception as e:
-            logger.exception("_reuse_check failed: %s", e)
-            show_user_error("Reuse check failed.", details=str(e))
-            self.tool_results["reuse_check"] = {}
-            payload["tool_results"] = {}
-
-        return payload
-
-    async def _validator_check(self, payload: dict[str, Any]) -> dict[str, Any]:
-        assert self.client is not None, "MCP client not initialized"
-        arguments = payload.get("tool_arguments", {})
-
-        call_args = {
-            "user": _normalize_str_arg(self.state.get("user"), default=""),
-            "name": _normalize_str_arg(self.state.get("name"), default=""),
-            "validation_server": arguments.get(
-                "validation_server",
-                "https://www.itb.ec.europa.eu/shacl/semicstyleguide/api/validate",
-            ),
-            "output_format": "text/turtle",
-            "validation_version": arguments.get("validation_version", "owl"),
-        }
-        payload["tool_arguments"] = call_args
-
-        try:
-            res = await self._call_with_progress("validator_check", call_args)
-            if res is None:
-                self.tool_results["validator_check"] = {}
-                payload["tool_results"] = {}
-                return payload
-
-            if getattr(res, "data", None) is not None and isinstance(res.data, dict):
-                self.tool_results["validator_check"] = res.data
-                payload["tool_results"] = res.data
-                return payload
-
-            text = "".join(getattr(b, "text", "") for b in (res.content or []))
-            parsed = safe_json_loads(text)
-            self.tool_results["validator_check"] = parsed
-            payload["tool_results"] = parsed
-        except Exception as e:
-            logger.exception("_validator_check failed: %s", e)
-            show_user_error("Validator check failed.", details=str(e))
-            self.tool_results["validator_check"] = {}
-            payload["tool_results"] = {}
-
-        return payload
-
-    async def _style_guide_check(self, payload: dict[str, Any]) -> dict[str, Any]:
-        assert self.client is not None, "MCP client not initialized"
-        arguments = payload.get("tool_arguments", {})
-
-        validator_check = self.tool_results.get("validator_check") or\
-            arguments.get("validator_check", {})
-        metadata_checks = self.tool_results.get("metadata_checker") or\
-            arguments.get("metadata_checker", {})
-        reuse_checks = self.tool_results.get("reuse_check") or arguments.get("reuse_check", {})
-
-        call_args = {
-            "validator_check": validator_check or {},
-            "metadata_checks": metadata_checks or {},
-            "reuse_checks": reuse_checks or {},
-        }
-        payload["tool_arguments"] = call_args
-
-        try:
-            res = await self._call_with_progress("style_guide_check", call_args)
-            if res is None:
-                payload["tool_results"] = {}
-                return payload
-
-            if getattr(res, "data", None) is not None and isinstance(res.data, dict):
-                payload["tool_results"] = res.data
-                return payload
-
-            text = "".join(getattr(b, "text", "") for b in (res.content or []))
-            payload["tool_results"] = safe_json_loads(text)
-        except Exception as e:
-            logger.exception("_style_guide_check failed: %s", e)
-            show_user_error("Style guide check failed.", details=str(e))
-            payload["tool_results"] = {}
-
-        return payload
-
-    # ------------------------------------------------------------------
-    # Direct UI helpers (not exposed to the LLM)
-    # ------------------------------------------------------------------
-    async def get_available_tags(self) -> list[dict[str, Any]]:
-        assert self.client is not None, "MCP client not initialized"
-        try:
-            # Appel direct au client FastMCP sous-jacent avec les arguments vides {}
-            res = await with_timeout(
-                self.client.call_tool("get_available_tags", {}),
-                seconds=30.0,
-                on_timeout_msg="Fetching tags timed out.",
-            )
-            if res is None:
-                return []
-
-            if getattr(res, "data", None) is not None and isinstance(res.data, list):
-                return res.data
-
-            text = "".join(getattr(b, "text", "") for b in (res.content or []))
-            if text:
-                parsed = safe_json_loads(text)
-                if isinstance(parsed, list):
-                    return parsed
-            return []
-        except Exception as e:
-            logger.exception("get_available_tags failed: %s", e)
-            return []
-
-    async def upload_model(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        assert self.client is not None, "MCP client not initialized"
-        model_payload = arguments.get("model")
-        if not model_payload:
-            show_user_error("No 'model' payload provided to upload_model.")
-            return {}
-
-        try:
-            res = await with_timeout(
-                self.client.call_tool(
-                    "upload_model",
-                    {
-                        "user": self.state.get("user"),
-                        "name": self.state.get("name"),
-                        "model": model_payload,
-                    },
-                ),
-                seconds=3000.0,
-                on_timeout_msg="Uploading model timed out. Please try again.",
-            )
-            if res is None:
-                return {}
-
-            if getattr(res, "data", None) is not None and isinstance(res.data, dict):
-                return res.data
-
-            text = "".join(getattr(b, "text", "") for b in (res.content or []))
-            return safe_json_loads(text)
-        except Exception as e:
-            logger.exception("upload_model failed: %s", e)
-            show_user_error("Uploading the model failed.", details=str(e))
-            return {}
-
-    async def read_model(self) -> dict[str, Any]:
-        assert self.client is not None, "MCP client not initialized"
-        user = self.state.get("user")
-        name = self.state.get("name")
-        if not user or not name:
-            show_user_error("Missing 'user' or 'name' in client state for read_model.")
-            return {}
-
-        try:
-            contents = await with_timeout(
-                self.client.read_resource(f"resource://model/{user}/{name}"),
-                seconds=3000.0,
-                on_timeout_msg="Reading model timed out. Please try again.",
-            )
-            if not contents:
-                return {}
-
-            text = getattr(contents[0], "text", None)
-            return safe_json_loads(text)
-        except Exception as e:
-            logger.exception("read_model failed: %s", e)
-            show_user_error("Reading the model failed.", details=str(e))
-            return {}
-
-    # ------------------------------------------------------------------
-    # Utilities
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _generate_id() -> str:
-        return f"EAID_{str(uuid4()).upper().replace('-', '_')}"
