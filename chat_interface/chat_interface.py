@@ -139,7 +139,7 @@ def _render_sidebar() -> None:
         if st.button("Démarrer / Recharger", use_container_width=True):
             st.session_state["user"] = user
             st.session_state["name"] = session
-            st.session_state["history"] = ChatHistory(user=user, session=session)
+            st.session_state["history"] = ChatHistory(user=user, name=session)
             st.session_state["completions"] = None
             st.session_state["messages"] = []
             st.rerun()
