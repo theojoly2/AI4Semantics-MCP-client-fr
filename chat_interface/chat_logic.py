@@ -443,8 +443,25 @@ async def _create_completion_streaming(
 # ----------------------------------------------------------------------
 def set_chatbox_layout() -> None:
     """
-    Minimal layout setup for GlossaryAI chat interface.
+    Layout setup for GlossaryAI chat interface, displaying the conversation history.
     """
+    history = st.session_state.get("history")
+    if history:
+        for msg in history.display_messages:
+            role = msg.get("role")
+            content = msg.get("content")
+
+            if role == "user" and content:
+                with st.chat_message("user"):
+                    st.write(content)
+
+            elif role == "assistant" and content:
+                with st.chat_message("assistant"):
+                    st.write(content)
+
+            elif role == "tool" and content:
+                _render_tool_output(content)
+
     st.markdown(
         """
         <style>
