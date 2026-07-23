@@ -4,6 +4,7 @@ from typing import Any, Optional
 import asyncio
 import logging
 from json import loads
+from datetime import datetime, timezone
 
 import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
@@ -13,6 +14,7 @@ from chat_history import ChatHistory
 from .chat_logic import set_chatbox_layout, process_user_input, show_user_error, _render_tool_output
 
 
+ANONYMOUS_USER = "anonymous"
 CONTACT_EMAIL = "theo.joly2@developpement-durable.gouv.fr"
 LOGGER_NAME = "glossary_chat_tab"
 logger = logging.getLogger(LOGGER_NAME)
@@ -165,6 +167,25 @@ def _clear_generation_state() -> None:
     st.session_state["_assistant_streaming"] = False
 
 
+def _anonymous_session_name() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+
+def _ensure_anonymous_history() -> ChatHistory:
+    """
+    If no user/session is set, silently create an anonymous session named with
+    the current UTC date/time so conversations are saved for analysis but not
+    easily guessable by end users.
+    """
+    history: ChatHistory = st.session_state.setdefault("history", ChatHistory())
+    if not history.user or not history.name:
+        session_name = _anonymous_session_name()
+        history = ChatHistory(user=ANONYMOUS_USER, name=session_name)
+        history.save()
+        st.session_state["history"] = history
+    return history
+
+
 def _init_state(server: str) -> ChatHistory:
     st.session_state.setdefault("_generating", False)
     st.session_state.setdefault("_pending_input", None)
@@ -190,14 +211,12 @@ def _init_state(server: str) -> ChatHistory:
         except Exception as conn_err:
             logger.error("Échec de l'initialisation immédiate du client MCP : %s", conn_err)
 
-    if "history" not in st.session_state:
-        st.session_state["history"] = ChatHistory()
-
     if "completions" not in st.session_state:
-        st.session_state["completions"] = OpenAIClient().chat_completions
-        st.session_state["completion_params"] = OpenAIClient().completion_params
+        openai_client = OpenAIClient()
+        st.session_state["completions"] = openai_client.chat_completions
+        st.session_state["completion_params"] = openai_client.completion_params
 
-    chat_history: ChatHistory = st.session_state["history"]
+    chat_history = _ensure_anonymous_history()
     st.session_state["user"] = chat_history.user
     st.session_state["name"] = chat_history.name
 
@@ -211,85 +230,49 @@ def _render_sidebar() -> None:
         chat_history: ChatHistory = st.session_state["history"]
         is_generating = st.session_state.get("_generating", False)
 
-        if not chat_history.user:
-            user_value = st.text_input(
-                "Nom d'utilisateur",
-                key="sidebar_user_value",
-                placeholder="Votre identifiant",
-                disabled=is_generating,
-            )
-            if st.button(
-                "Valider l'utilisateur",
-                key="sidebar_set_user",
-                use_container_width=True,
-                disabled=is_generating,
-            ):
-                user_value = user_value.strip()
-                if not user_value:
-                    show_user_error("Veuillez saisir un utilisateur avant de continuer.")
-                    return
-                _set_active_history(ChatHistory(user=user_value))
-                st.session_state["_reset_sidebar_inputs"] = True
-                st.rerun()
+        if chat_history.user == ANONYMOUS_USER:
+            st.caption("Session anonyme — la conversation est enregistrée pour analyse interne.")
         else:
             st.write(f"**Utilisateur:** {chat_history.user}")
 
-            if not chat_history.name:
-                session_value = st.text_input(
-                    "Nom de la session",
-                    key="sidebar_session_value",
-                    placeholder="Nom de session",
-                    disabled=is_generating,
-                )
-                if st.button(
-                    "Valider la session",
-                    key="sidebar_set_session",
-                    use_container_width=True,
-                    disabled=is_generating,
-                ):
-                    session_value = session_value.strip()
-                    if not session_value:
-                        show_user_error("Veuillez saisir un nom de session.")
-                        return
-                    try:
-                        _open_or_create_history(chat_history.user, session_value)
-                        st.session_state["_reset_sidebar_inputs"] = True
-                        st.rerun()
-                    except Exception as e:
-                        show_user_error(
-                            "Une erreur est survenue lors de l'ouverture de la session.",
-                            details=str(e),
-                        )
-                        return
-            else:
-                st.write(f"**Session:** {chat_history.name}")
+        st.write(f"**Session:** {chat_history.name}")
 
-                reload_session = st.text_input(
-                    "Session à charger",
-                    key="sidebar_reload_session",
-                    placeholder="Session existante",
-                    disabled=is_generating,
+        reload_session = st.text_input(
+            "Session à charger",
+            key="sidebar_reload_session",
+            placeholder="Session existante",
+            disabled=is_generating,
+        )
+        if st.button(
+            "Charger la session",
+            key="sidebar_load_session",
+            use_container_width=True,
+            disabled=is_generating,
+        ):
+            reload_session = reload_session.strip()
+            if not reload_session:
+                show_user_error("Veuillez saisir un nom de session à charger.")
+                return
+            try:
+                user = chat_history.user if chat_history.user else ANONYMOUS_USER
+                _open_or_create_history(user, reload_session)
+                st.session_state["_reset_sidebar_inputs"] = True
+                st.rerun()
+            except Exception as e:
+                show_user_error(
+                    "Une erreur est survenue lors du chargement de la session.",
+                    details=str(e),
                 )
-                if st.button(
-                    "Charger la session",
-                    key="sidebar_load_session",
-                    use_container_width=True,
-                    disabled=is_generating,
-                ):
-                    reload_session = reload_session.strip()
-                    if not reload_session:
-                        show_user_error("Veuillez saisir un nom de session à charger.")
-                        return
-                    try:
-                        _open_or_create_history(chat_history.user, reload_session)
-                        st.session_state["_reset_sidebar_inputs"] = True
-                        st.rerun()
-                    except Exception as e:
-                        show_user_error(
-                            "Une erreur est survenue lors du chargement de la session.",
-                            details=str(e),
-                        )
-                        return
+                return
+
+        if st.button(
+            "Nouvelle session anonyme",
+            key="new_anonymous_session",
+            use_container_width=True,
+            disabled=is_generating,
+        ):
+            _set_active_history(ChatHistory(user=ANONYMOUS_USER, name=_anonymous_session_name()))
+            st.rerun()
 
         st.divider()
         st.subheader("Filtres par source")
@@ -329,6 +312,8 @@ def _set_active_history(history: ChatHistory) -> None:
     _clear_generation_state()
     st.session_state["_live_chat_events"] = []
     st.session_state["_live_event_seq"] = 0
+    st.session_state["_tags_initialized"] = False
+    st.session_state["selected_tags"] = []
 
 
 def _open_or_create_history(user: str, session_name: str) -> ChatHistory:
