@@ -22,7 +22,7 @@ from openai.types.chat import (
     ChatCompletionMessageToolCallParam,
 )
 from openai.resources.chat.completions import AsyncCompletions
-from chat_history import ChatHistory
+from chat_history.chat_history import ChatHistory
 
 
 # ----------------------------------------------------------------------
@@ -467,24 +467,21 @@ def set_chatbox_layout() -> None:
         <style>
             .stChatInput {
                 position: fixed;
-                bottom: 50px;
+                bottom: 0.5rem;
                 width: 65%;
                 z-index: 3;
             }
-            .fixed-square {
-                position: fixed;
-                bottom: 0;
-                left: 28%;
-                width: 67%;
-                height: 100px;
-                background-color: white;
-                z-index: 2;
+            .stChatFloatingInputContainer {
+                position: fixed !important;
+                bottom: 0.5rem !important;
+                left: 28% !important;
+                width: 67% !important;
+                z-index: 3 !important;
             }
             main {
                 z-index: 1;
             }
         </style>
-        <div class="fixed-square"></div>
         """,
         unsafe_allow_html=True,
     )
