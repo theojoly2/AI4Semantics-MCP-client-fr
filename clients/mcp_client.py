@@ -350,10 +350,7 @@ class MCPClient:
                 default=True,
             ),
             "tags": self.state.get("selected_tags", []),
-            "document_filter": _normalize_str_arg(arguments.get("document_filter"), default=""),
         }
-        if not call_args["document_filter"]:
-            call_args.pop("document_filter")
 
         payload["tool_arguments"] = call_args
 
