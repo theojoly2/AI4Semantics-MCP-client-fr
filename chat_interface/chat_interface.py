@@ -47,6 +47,67 @@ async def with_timeout(coro, seconds: float = 45.0, on_timeout_msg: str = ""):
         return None
 
 
+def _inject_scroll_js() -> None:
+    """Inject auto-scroll script directly into the chat panel so it runs after every render."""
+    st.markdown(
+        """
+        <script>
+            (function () {
+                window.__glossaryUserScrolledUp = window.__glossaryUserScrolledUp || false;
+                let userHasScrolledUp = window.__glossaryUserScrolledUp;
+
+                function isNearBottom() {
+                    const el = document.documentElement;
+                    return (el.scrollHeight - el.scrollTop - el.clientHeight) < 200;
+                }
+
+                function scrollToBottom() {
+                    if (userHasScrolledUp) return;
+                    const el = document.documentElement;
+                    const target = el.scrollHeight;
+                    if (el.scrollTop < target - 10) {
+                        window.scrollTo({ top: target, left: 0, behavior: 'auto' });
+                        el.scrollTop = target;
+                    }
+                }
+
+                function onWindowScroll() {
+                    const el = document.documentElement;
+                    // Detect intentional upward scroll (user wants to read old content)
+                    if (el.scrollTop < (window.__glossaryPrevScrollTop || 0) - 20) {
+                        userHasScrolledUp = true;
+                        window.__glossaryUserScrolledUp = true;
+                    } else if (isNearBottom()) {
+                        userHasScrolledUp = false;
+                        window.__glossaryUserScrolledUp = false;
+                    }
+                    window.__glossaryPrevScrollTop = el.scrollTop;
+                }
+
+                window.removeEventListener('scroll', onWindowScroll);
+                window.addEventListener('scroll', onWindowScroll, { passive: true });
+
+                // Aggressive repeated scrolling: page grows during generation, so one scroll is not enough
+                function ensureBottom() {
+                    if (!userHasScrolledUp) {
+                        scrollToBottom();
+                    }
+                }
+
+                // Run immediately and repeatedly
+                ensureBottom();
+                setInterval(ensureBottom, 100);
+
+                // Also hook DOM mutations in case page height changes
+                const observer = new MutationObserver(ensureBottom);
+                observer.observe(document.body, { childList: true, subtree: true });
+            })();
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _inject_layout_css() -> None:
     st.markdown(
         """
@@ -183,60 +244,7 @@ def _inject_layout_css() -> None:
                 font-size: 0.95rem;
                 color: #111;
             }
-        </style>
-        <script>
-            (function () {
-                let userHasScrolledUp = false;
-                let lastScrollTop = 0;
-
-                function getMainScrollElement() {
-                    return document.documentElement;
-                }
-
-                function isNearBottom() {
-                    const el = getMainScrollElement();
-                    return (el.scrollHeight - el.scrollTop - el.clientHeight) < 100;
-                }
-
-                function scrollToAnchor() {
-                    if (userHasScrolledUp) return;
-                    const anchor = document.getElementById('chat-scroll-anchor');
-                    if (anchor) {
-                        anchor.scrollIntoView({ behavior: 'auto', block: 'end' });
-                    } else {
-                        const el = getMainScrollElement();
-                        el.scrollTo({ top: el.scrollHeight, behavior: 'auto' });
-                    }
-                }
-
-                function onWindowScroll() {
-                    const el = getMainScrollElement();
-                    const current = el.scrollTop;
-                    if (current < lastScrollTop - 5) {
-                        userHasScrolledUp = true;
-                    } else if (isNearBottom()) {
-                        userHasScrolledUp = false;
-                    }
-                    lastScrollTop = current;
-                }
-
-                window.addEventListener('scroll', onWindowScroll, { passive: true });
-                lastScrollTop = getMainScrollElement().scrollTop;
-
-                // Hook into Streamlit-rendered message containers: scroll when new content appears
-                const observer = new MutationObserver(function () {
-                    if (!userHasScrolledUp) {
-                        scrollToAnchor();
-                    }
-                });
-                observer.observe(document.body, { childList: true, subtree: true });
-
-                // Safety interval for streaming updates between DOM mutations
-                setInterval(function () {
-                    if (!userHasScrolledUp) scrollToAnchor();
-                }, 200);
-            })();
-        </script>
+            </style>
         """,
         unsafe_allow_html=True,
     )
@@ -519,6 +527,7 @@ async def _render_chat_panel(user_input: Optional[str] = None) -> None:
     # Anchor element that the auto-scroll script targets
     st.markdown("<div id='chat-scroll-anchor' style='height:1px; width:100%;'></div>", unsafe_allow_html=True)
     st.markdown("<div class='chat-bottom-guard'></div>", unsafe_allow_html=True)
+    _inject_scroll_js()
 
 
 def data_modelling_chat_tab(server: str) -> None:
