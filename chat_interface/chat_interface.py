@@ -187,51 +187,72 @@ def _inject_layout_css() -> None:
         <script>
             (function () {
                 let lastScrollHeight = 0;
+                let lastScrollTop = 0;
                 let userHasScrolledUp = false;
 
-                function findChatContainer() {
-                    const containers = document.querySelectorAll('div[data-testid="stContainer"]');
-                    for (const container of containers) {
-                        if (container.querySelector('.chat-scroll-anchor')) {
-                            return container;
-                        }
-                    }
-                    return null;
+                function getScrollElement() {
+                    // Streamlit's main scrollable surface is usually the document/body
+                    const main = document.querySelector('main');
+                    if (main && main.scrollHeight > main.clientHeight) return main;
+                    const app = document.querySelector('.stApp');
+                    if (app && app.scrollHeight > app.clientHeight) return app;
+                    return document.documentElement;
                 }
 
-                function isNearBottom(container) {
-                    const threshold = 80; // px
-                    return (container.scrollHeight - container.scrollTop - container.clientHeight) < threshold;
+                function isNearBottom(el) {
+                    const threshold = 120; // px
+                    const scrollTop = el.scrollTop ?? document.documentElement.scrollTop;
+                    const scrollHeight = el.scrollHeight ?? document.documentElement.scrollHeight;
+                    const clientHeight = el.clientHeight ?? document.documentElement.clientHeight;
+                    return (scrollHeight - scrollTop - clientHeight) < threshold;
+                }
+
+                function scrollToBottom(el) {
+                    const target = el || getScrollElement();
+                    target.scrollTo({ top: target.scrollHeight, behavior: 'auto' });
+                    // Also force html/body just in case
+                    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'auto' });
                 }
 
                 function scrollChatToBottom() {
-                    const container = findChatContainer();
-                    if (!container) return;
+                    const el = getScrollElement();
+                    const currentScrollHeight = el.scrollHeight || document.documentElement.scrollHeight;
+                    const currentScrollTop = el.scrollTop ?? document.documentElement.scrollTop;
 
-                    // Detect user manual scroll up
-                    if (container.scrollHeight !== lastScrollHeight) {
-                        // Content changed: only auto-scroll if user was already near bottom
-                        if (!userHasScrolledUp || isNearBottom(container)) {
-                            container.scrollTop = container.scrollHeight;
+                    // If content grew or we are still near bottom, scroll down
+                    if (currentScrollHeight !== lastScrollHeight) {
+                        if (!userHasScrolledUp || isNearBottom(el)) {
+                            scrollToBottom(el);
                         }
-                        lastScrollHeight = container.scrollHeight;
+                        lastScrollHeight = currentScrollHeight;
+                    } else if (!userHasScrolledUp && !isNearBottom(el)) {
+                        // User hasn't scrolled up but isn't near bottom yet (generation in progress)
+                        scrollToBottom(el);
                     }
+                    lastScrollTop = currentScrollTop;
                 }
 
                 function onUserScroll() {
-                    const container = findChatContainer();
-                    if (!container) return;
-                    userHasScrolledUp = !isNearBottom(container);
+                    const el = getScrollElement();
+                    const currentScrollTop = el.scrollTop ?? document.documentElement.scrollTop;
+                    // If user scrolled up significantly, mark as manual scroll
+                    if (currentScrollTop < lastScrollTop - 10) {
+                        userHasScrolledUp = true;
+                    } else if (isNearBottom(el)) {
+                        userHasScrolledUp = false;
+                    }
+                    lastScrollTop = currentScrollTop;
                 }
 
-                const container = findChatContainer();
-                if (container) {
-                    container.addEventListener('scroll', onUserScroll);
-                    lastScrollHeight = container.scrollHeight;
+                const scrollTarget = getScrollElement();
+                if (scrollTarget) {
+                    scrollTarget.addEventListener('scroll', onUserScroll, { passive: true });
+                    lastScrollHeight = scrollTarget.scrollHeight || document.documentElement.scrollHeight;
+                    lastScrollTop = scrollTarget.scrollTop ?? document.documentElement.scrollTop;
                 }
 
-                // Auto-scroll only when new content arrives and user is near bottom
-                setInterval(scrollChatToBottom, 400);
+                // Aggressive auto-scroll during generation, respects manual scroll-up
+                setInterval(scrollChatToBottom, 250);
             })();
         </script>
         """,
