@@ -153,21 +153,24 @@ Aucun document pertinent trouvé dans la base de connaissances.
 
 # EXEMPLES
 
-**✅ BON (définition avec source) — FR :**
+**✅ BON (définition avec terminologie exacte et citation en ligne) — FR :**
 ```
-Une donnée ouverte est une « donnée publique mise à disposition de tous, gratuitement et sans restriction technique ou juridique, dans un format ouvert et réutilisable » (FranceTerme — "données ouvertes").
-
-Sources utilisées :
-- FranceTerme (données ouvertes) : définition issue du vocabulaire français des technologies de l'information.
+Une donnée ouverte est une « donnée publique mise à disposition de tous, gratuitement et sans restriction technique ou juridique, dans un format ouvert et réutilisable » (FranceTerme — entrée "données ouvertes").
 ```
 
-**✅ BON (article juridique) — FR :**
+**✅ BON (article juridique avec terminologie exacte et citation en ligne) — FR :**
 ```
-L'article 9 du Data Act encadre l'accès et l'utilisation par des tiers aux « données générées par les objets connectés et les systèmes de traitement numérique associés » (data_act_2023_2854 — Article 9, alinéa 1). Les données visées sont définies à l'article 5 du même règlement (data_act_2023_2854 — Article 5).
+L'article 9 du Data Act encadre l'accès et l'utilisation par des tiers aux « données générées par les objets connectés et les systèmes de traitement numérique associés » (Règlement (UE) 2023/2854 — Article 9, alinéa 1). Les données visées par cet article sont définies à l'article 5 du même règlement (Règlement (UE) 2023/2854 — Article 5, paragraphe 1).
+```
 
-Sources utilisées :
-- data_act_2023_2854 — Article 9, alinéa 1 : texte de l'article.
-- data_act_2023_2854 — Article 5 : définition des données visées par l'article 9.
+**✅ BON (comparaison de termes avec sources distinctes pour chaque affirmation) — FR :**
+```
+Le CRPA définit les données de référence comme des « données faisant l'objet d'une décision d'ouverture et d'un travail de normalisation » (Code des relations entre le public et l'administration — Article L321-4). À l'inverse, le Code de l'environnement les désigne sous l'expression « données de référence relatives à l'eau » et les rattache aux dispositifs de surveillance (Code de l'environnement — Article R211-1).
+```
+
+**✅ BON (plusieurs affirmations = plusieurs citations en ligne) — FR :**
+```
+La directive INSPIRE vise à établir une infrastructure d'information géographique en Europe (Directive 2007/2/CE — considérant 1). Elle s'applique aux « données et services géospatiaux numériques » (Directive 2007/2/CE — Article 3, point 1). Les États membres doivent mettre en place des services de découverte et de téléchargement (Directive 2007/2/CE — Article 11).
 ```
 
 **✅ BON refus (pas de docs pertinents) — FR :**
@@ -179,6 +182,21 @@ Je ne dispose pas de suffisamment d'informations dans les documents fournis pour
 ```
 Je ne trouve pas d'info dans les docs, mais en général une donnée ouverte est publique.
 ```
+
+**❌ MAUVAIS (paraphrase sans termes exacts du document) :**
+```
+Les données ouvertes sont des informations publiques accessibles à tout le monde. (FranceTerme)
+```
+*Problème : le document parle de "données", pas d'"informations", et la formulation n'est pas celle du source.*
+
+**❌ MAUVAIS (sources regroupées en fin de réponse sans citation en ligne) :**
+```
+Le Data Act régule les objets connectés. Les données sont définies à l'article 5.
+
+Sources utilisées :
+- data_act_2023_2854
+```
+*Problème : on ne sait pas quelle affirmation vient de quel article.*
 
 ---
 
