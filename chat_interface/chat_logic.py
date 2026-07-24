@@ -212,12 +212,13 @@ def _render_live_chat_events_in(slot: DeltaGenerator) -> None:
                 _render_tool_output(content, fallback_name=event.get("tool_name"))
 
             elif kind == "thinking":
+                label = content or "Le chatbot réfléchit..."
                 with st.chat_message("assistant"):
                     st.markdown(
-                        """
+                        f"""
                         <div class="chat-thinking-wrap">
                             <span class="chat-thinking-spinner"></span>
-                            <span class="chat-thinking-label">Le chatbot réfléchit...</span>
+                            <span class="chat-thinking-label">{label}</span>
                         </div>
                         """,
                         unsafe_allow_html=True,
@@ -524,11 +525,17 @@ async def process_user_input(
         assistant_live_event_id: Optional[int] = None
         history: ChatHistory = st.session_state["history"]
 
-        async def _begin_thinking() -> None:
+        async def _begin_thinking(label: str = "Le chatbot réfléchit...") -> None:
             await _call_optional(on_thinking_start)
             if not _has_trailing_thinking_event():
-                _append_live_event("thinking")
+                _append_live_event("thinking", content=label)
                 _rerender_live()
+            else:
+                # Update existing thinking event label if it changed
+                events = _live_events()
+                if events and events[-1].get("kind") == "thinking":
+                    events[-1]["content"] = label
+                    _rerender_live()
 
         async def _begin_assistant_stream() -> None:
             nonlocal assistant_live_event_id
@@ -583,8 +590,17 @@ async def process_user_input(
         if mcp_client is None:
             mcp_client = st.session_state.get("mcp_client")
 
+        # Mapping des noms d'outils vers des labels utilisateur
+        tool_labels = {
+            "plan_workflow_with_tools": "Planification de la réponse...",
+            "retrieve_documents": "Recherche dans les documents...",
+            "resolve_links": "Résolution des liens juridiques...",
+            "compare_concepts": "Comparaison des concepts...",
+            "get_available_tags": "Récupération des sources disponibles...",
+        }
+
         async with mcp_client:
-            await _begin_thinking()
+            await _begin_thinking(tool_labels.get("plan_workflow_with_tools", "Préparation de la réponse..."))
             tools = await with_timeout(
                 mcp_client.tools(),
                 seconds=3000.0,
@@ -603,7 +619,7 @@ async def process_user_input(
             assistant_live_event_id = None
 
             try:
-                await _begin_thinking()
+                await _begin_thinking("Le chatbot réfléchit...")
 
                 llm_messages = history.build_messages_for_llm(
                     current_user_input=user_input,
@@ -671,7 +687,8 @@ async def process_user_input(
                         name = function["name"]
                         raw_arguments_text = function.get("arguments", "{}")
 
-                        await _begin_thinking()
+                        label = tool_labels.get(name, f"Exécution de {name}...")
+                        await _begin_thinking(label)
 
                         try:
                             args = safe_json_loads(raw_arguments_text)
