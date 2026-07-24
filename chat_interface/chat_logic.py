@@ -43,18 +43,42 @@ if not logger.handlers:
 # UI helpers
 # ----------------------------------------------------------------------
 def _scroll_page_to_bottom() -> None:
-    """Scroll the whole page to the bottom immediately after the user sends a message."""
-    st.markdown(
+    """Scroll the whole page to the bottom immediately after the user sends a message.
+
+    Uses an invisible iframe component so the script is guaranteed to execute even
+    after Streamlit reruns.
+    """
+    import streamlit.components.v1 as components
+
+    components.html(
         """
         <script>
             (function () {
-                const el = document.documentElement;
-                window.scrollTo({ top: el.scrollHeight, left: 0, behavior: 'auto' });
-                el.scrollTop = el.scrollHeight;
+                function scrollParentToBottom() {
+                    try {
+                        var parentDoc = window.parent.document;
+                        var root = parentDoc.documentElement;
+                        var body = parentDoc.body;
+                        var target = Math.max(
+                            body ? body.scrollHeight : 0,
+                            root ? root.scrollHeight : 0
+                        );
+                        window.parent.scrollTo({ top: target, left: 0, behavior: 'auto' });
+                        if (root) { root.scrollTop = target; }
+                        if (body) { body.scrollTop = target; }
+                    } catch (e) {
+                        // iframe sandbox may block parent access; fail silently
+                    }
+                }
+                scrollParentToBottom();
+                // Retry after a short delay in case Streamlit is still rendering
+                setTimeout(scrollParentToBottom, 50);
+                setTimeout(scrollParentToBottom, 150);
             })();
         </script>
         """,
-        unsafe_allow_html=True,
+        height=0,
+        width=0,
     )
 
 
