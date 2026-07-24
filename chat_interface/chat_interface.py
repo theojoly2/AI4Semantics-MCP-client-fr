@@ -105,9 +105,9 @@ def _inject_layout_css() -> None:
                 bottom: 0 !important;
                 left: 0 !important;
                 width: 100% !important;
-                height: 4.5rem !important;
+                height: 5.5rem !important;
                 background: white !important;
-                z-index: 19 !important;
+                z-index: 18 !important;
                 pointer-events: none !important;
             }
             /* Prevent the fixed chat input from blocking the bottom of the page */
