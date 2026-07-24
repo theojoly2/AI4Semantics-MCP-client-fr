@@ -12,6 +12,8 @@ SERVER = config["MCP-server"]["local"]
 from chat_interface import data_modelling_chat_tab
 
 st.set_page_config(
+    page_title="GlossaryAI",
+    page_icon="🏷️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
