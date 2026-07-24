@@ -186,73 +186,55 @@ def _inject_layout_css() -> None:
         </style>
         <script>
             (function () {
-                let lastScrollHeight = 0;
-                let lastScrollTop = 0;
                 let userHasScrolledUp = false;
+                let lastScrollTop = 0;
 
-                function getScrollElement() {
-                    // Streamlit's main scrollable surface is usually the document/body
-                    const main = document.querySelector('main');
-                    if (main && main.scrollHeight > main.clientHeight) return main;
-                    const app = document.querySelector('.stApp');
-                    if (app && app.scrollHeight > app.clientHeight) return app;
+                function getMainScrollElement() {
                     return document.documentElement;
                 }
 
-                function isNearBottom(el) {
-                    const threshold = 120; // px
-                    const scrollTop = el.scrollTop ?? document.documentElement.scrollTop;
-                    const scrollHeight = el.scrollHeight ?? document.documentElement.scrollHeight;
-                    const clientHeight = el.clientHeight ?? document.documentElement.clientHeight;
-                    return (scrollHeight - scrollTop - clientHeight) < threshold;
+                function isNearBottom() {
+                    const el = getMainScrollElement();
+                    return (el.scrollHeight - el.scrollTop - el.clientHeight) < 100;
                 }
 
-                function scrollToBottom(el) {
-                    const target = el || getScrollElement();
-                    target.scrollTo({ top: target.scrollHeight, behavior: 'auto' });
-                    // Also force html/body just in case
-                    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'auto' });
-                }
-
-                function scrollChatToBottom() {
-                    const el = getScrollElement();
-                    const currentScrollHeight = el.scrollHeight || document.documentElement.scrollHeight;
-                    const currentScrollTop = el.scrollTop ?? document.documentElement.scrollTop;
-
-                    // If content grew or we are still near bottom, scroll down
-                    if (currentScrollHeight !== lastScrollHeight) {
-                        if (!userHasScrolledUp || isNearBottom(el)) {
-                            scrollToBottom(el);
-                        }
-                        lastScrollHeight = currentScrollHeight;
-                    } else if (!userHasScrolledUp && !isNearBottom(el)) {
-                        // User hasn't scrolled up but isn't near bottom yet (generation in progress)
-                        scrollToBottom(el);
+                function scrollToAnchor() {
+                    if (userHasScrolledUp) return;
+                    const anchor = document.getElementById('chat-scroll-anchor');
+                    if (anchor) {
+                        anchor.scrollIntoView({ behavior: 'auto', block: 'end' });
+                    } else {
+                        const el = getMainScrollElement();
+                        el.scrollTo({ top: el.scrollHeight, behavior: 'auto' });
                     }
-                    lastScrollTop = currentScrollTop;
                 }
 
-                function onUserScroll() {
-                    const el = getScrollElement();
-                    const currentScrollTop = el.scrollTop ?? document.documentElement.scrollTop;
-                    // If user scrolled up significantly, mark as manual scroll
-                    if (currentScrollTop < lastScrollTop - 10) {
+                function onWindowScroll() {
+                    const el = getMainScrollElement();
+                    const current = el.scrollTop;
+                    if (current < lastScrollTop - 5) {
                         userHasScrolledUp = true;
-                    } else if (isNearBottom(el)) {
+                    } else if (isNearBottom()) {
                         userHasScrolledUp = false;
                     }
-                    lastScrollTop = currentScrollTop;
+                    lastScrollTop = current;
                 }
 
-                const scrollTarget = getScrollElement();
-                if (scrollTarget) {
-                    scrollTarget.addEventListener('scroll', onUserScroll, { passive: true });
-                    lastScrollHeight = scrollTarget.scrollHeight || document.documentElement.scrollHeight;
-                    lastScrollTop = scrollTarget.scrollTop ?? document.documentElement.scrollTop;
-                }
+                window.addEventListener('scroll', onWindowScroll, { passive: true });
+                lastScrollTop = getMainScrollElement().scrollTop;
 
-                // Aggressive auto-scroll during generation, respects manual scroll-up
-                setInterval(scrollChatToBottom, 250);
+                // Hook into Streamlit-rendered message containers: scroll when new content appears
+                const observer = new MutationObserver(function () {
+                    if (!userHasScrolledUp) {
+                        scrollToAnchor();
+                    }
+                });
+                observer.observe(document.body, { childList: true, subtree: true });
+
+                // Safety interval for streaming updates between DOM mutations
+                setInterval(function () {
+                    if (!userHasScrolledUp) scrollToAnchor();
+                }, 200);
             })();
         </script>
         """,
@@ -523,8 +505,6 @@ def _render_page_bottom_guard(height_px: int = 56) -> None:
 
 
 async def _render_chat_panel(user_input: Optional[str] = None) -> None:
-    st.markdown("<div class='chat-scroll-anchor'></div>", unsafe_allow_html=True)
-
     chat_slot = st.container(border=False)
     with chat_slot:
         set_chatbox_layout()
@@ -536,6 +516,8 @@ async def _render_chat_panel(user_input: Optional[str] = None) -> None:
                 _clear_generation_state()
             st.rerun()
 
+    # Anchor element that the auto-scroll script targets
+    st.markdown("<div id='chat-scroll-anchor' style='height:1px; width:100%;'></div>", unsafe_allow_html=True)
     st.markdown("<div class='chat-bottom-guard'></div>", unsafe_allow_html=True)
 
 
