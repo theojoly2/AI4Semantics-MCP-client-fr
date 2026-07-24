@@ -11,7 +11,7 @@ from streamlit.delta_generator import DeltaGenerator
 
 from clients import OpenAIClient, MCPClient
 from chat_history.chat_history import ChatHistory
-from .chat_logic import set_chatbox_layout, process_user_input, show_user_error, _render_tool_output
+from .chat_logic import set_chatbox_layout, process_user_input, show_user_error, _render_tool_output, scroll_page_to_bottom
 
 
 ANONYMOUS_USER = "anonymous"

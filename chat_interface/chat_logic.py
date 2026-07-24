@@ -42,33 +42,52 @@ if not logger.handlers:
 # ----------------------------------------------------------------------
 # UI helpers
 # ----------------------------------------------------------------------
-def _scroll_page_to_bottom() -> None:
+def scroll_page_to_bottom() -> None:
     """Scroll the whole page to the bottom immediately after the user sends a message."""
-    import streamlit.components.v1 as components
-
-    components.html(
+    st.markdown(
         """
+        <div id="chat-scroll-target" style="height:1px;width:100%;"></div>
         <script>
             (function () {
-                function scrollToBottom() {
+                function scrollAllTheWayDown() {
                     try {
-                        window.parent.scrollTo({ top: window.parent.document.body.scrollHeight, behavior: 'auto' });
-                        window.parent.scrollTo({ top: window.parent.document.documentElement.scrollHeight, behavior: 'auto' });
-                        window.parent.document.documentElement.scrollTop = window.parent.document.documentElement.scrollHeight;
-                        window.parent.document.body.scrollTop = window.parent.document.body.scrollHeight;
+                        var selectors = [
+                            document.documentElement,
+                            document.body,
+                            document.querySelector('main'),
+                            document.querySelector('.stApp'),
+                            document.querySelector('.main'),
+                            document.querySelector('[data-testid="stAppViewContainer"]')
+                        ];
+                        var target = Math.max(
+                            document.documentElement.scrollHeight || 0,
+                            document.body.scrollHeight || 0,
+                            document.documentElement.offsetHeight || 0,
+                            document.body.offsetHeight || 0
+                        );
+                        window.scrollTo({ top: target, left: 0, behavior: 'auto' });
+                        for (var i = 0; i < selectors.length; i++) {
+                            var el = selectors[i];
+                            if (el && el.scrollHeight > el.clientHeight) {
+                                el.scrollTop = el.scrollHeight;
+                            }
+                        }
+                        var anchor = document.getElementById('chat-scroll-target');
+                        if (anchor) {
+                            anchor.scrollIntoView({ behavior: 'auto', block: 'end' });
+                        }
                     } catch (e) {}
                 }
-                scrollToBottom();
-                setTimeout(scrollToBottom, 50);
-                setTimeout(scrollToBottom, 150);
-                setTimeout(scrollToBottom, 300);
-                setTimeout(scrollToBottom, 500);
-                setTimeout(scrollToBottom, 800);
+                scrollAllTheWayDown();
+                setTimeout(scrollAllTheWayDown, 50);
+                setTimeout(scrollAllTheWayDown, 150);
+                setTimeout(scrollAllTheWayDown, 300);
+                setTimeout(scrollAllTheWayDown, 500);
+                setTimeout(scrollAllTheWayDown, 800);
             })();
         </script>
         """,
-        height=0,
-        width=0,
+        unsafe_allow_html=True,
     )
 
 
@@ -606,7 +625,7 @@ async def process_user_input(
         if not skip_user_echo:
             _append_live_event("user", user_input)
             _rerender_live()
-            _scroll_page_to_bottom()
+            scroll_page_to_bottom()
 
         history.start_new_request(user_input)
         history.add_user_message(user_input)
