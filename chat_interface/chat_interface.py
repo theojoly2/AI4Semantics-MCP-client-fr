@@ -97,7 +97,7 @@ def _inject_layout_css() -> None:
                 padding: 0.5rem 1rem 0.75rem 1rem !important;
                 background: white !important;
                 border-top: 1px solid #e6e6e6;
-                z-index: 20 !important;
+                z-index: 100 !important;
             }
             /* Full-width white backdrop behind the fixed input bar, above messages */
             .chat-input-backdrop {
@@ -107,7 +107,7 @@ def _inject_layout_css() -> None:
                 width: 100% !important;
                 height: 5.5rem !important;
                 background: white !important;
-                z-index: 18 !important;
+                z-index: 99 !important;
                 pointer-events: none !important;
             }
             /* Prevent the fixed chat input from blocking the bottom of the page */
