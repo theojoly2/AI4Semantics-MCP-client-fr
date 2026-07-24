@@ -44,43 +44,26 @@ if not logger.handlers:
 # ----------------------------------------------------------------------
 def _scroll_page_to_bottom() -> None:
     """Scroll the whole page to the bottom immediately after the user sends a message."""
-    # Use a fixed-height iframe so the JS runs in its own execution context every time.
     import streamlit.components.v1 as components
 
     components.html(
         """
         <script>
             (function () {
-                function scrollParentToBottom() {
+                function scrollToBottom() {
                     try {
-                        var doc = window.parent.document;
-                        var root = doc.documentElement;
-                        var body = doc.body;
-                        var target = Math.max(
-                            body ? body.scrollHeight : 0,
-                            root ? root.scrollHeight : 0,
-                            root ? root.offsetHeight : 0
-                        );
-                        // Compensate for the fixed chat input bar (~80px)
-                        var inputBar = doc.querySelector('.stChatFloatingInputContainer');
-                        var offset = inputBar ? inputBar.offsetHeight + 20 : 100;
-                        var finalTarget = Math.max(0, target - offset);
-                        window.parent.scrollTo({ top: finalTarget, left: 0, behavior: 'auto' });
-                        if (root) { root.scrollTop = finalTarget; }
-                        if (body) { body.scrollTop = finalTarget; }
-                        var anchor = doc.getElementById('chat-scroll-anchor');
-                        if (anchor) {
-                            anchor.scrollIntoView({ behavior: 'auto', block: 'end' });
-                        }
+                        window.parent.scrollTo({ top: window.parent.document.body.scrollHeight, behavior: 'auto' });
+                        window.parent.scrollTo({ top: window.parent.document.documentElement.scrollHeight, behavior: 'auto' });
+                        window.parent.document.documentElement.scrollTop = window.parent.document.documentElement.scrollHeight;
+                        window.parent.document.body.scrollTop = window.parent.document.body.scrollHeight;
                     } catch (e) {}
                 }
-                scrollParentToBottom();
-                var attempts = 0;
-                var interval = setInterval(function () {
-                    scrollParentToBottom();
-                    attempts += 1;
-                    if (attempts >= 20) { clearInterval(interval); }
-                }, 100);
+                scrollToBottom();
+                setTimeout(scrollToBottom, 50);
+                setTimeout(scrollToBottom, 150);
+                setTimeout(scrollToBottom, 300);
+                setTimeout(scrollToBottom, 500);
+                setTimeout(scrollToBottom, 800);
             })();
         </script>
         """,
