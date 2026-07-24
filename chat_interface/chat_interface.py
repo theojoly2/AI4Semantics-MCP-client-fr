@@ -518,10 +518,7 @@ async def _render_chat_panel(user_input: Optional[str] = None) -> None:
                 _clear_generation_state()
             st.rerun()
 
-    # Anchor element that the auto-scroll script targets
-    st.markdown("<div id='chat-scroll-anchor' style='height:1px; width:100%;'></div>", unsafe_allow_html=True)
     st.markdown("<div class='chat-bottom-guard'></div>", unsafe_allow_html=True)
-    _inject_scroll_js()
 
 
 def data_modelling_chat_tab(server: str) -> None:

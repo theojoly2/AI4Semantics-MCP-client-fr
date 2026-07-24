@@ -43,42 +43,39 @@ if not logger.handlers:
 # UI helpers
 # ----------------------------------------------------------------------
 def _scroll_page_to_bottom() -> None:
-    """Scroll the whole page to the bottom immediately after the user sends a message.
-
-    Uses an invisible iframe component so the script is guaranteed to execute even
-    after Streamlit reruns.
-    """
-    import streamlit.components.v1 as components
-
-    components.html(
+    """Scroll the whole page to the bottom immediately after the user sends a message."""
+    st.html(
         """
+        <div id="chat-scroll-anchor" style="height:1px;width:100%;"></div>
         <script>
             (function () {
-                function scrollParentToBottom() {
+                function scrollToBottom() {
                     try {
-                        var parentDoc = window.parent.document;
-                        var root = parentDoc.documentElement;
-                        var body = parentDoc.body;
+                        var anchor = document.getElementById('chat-scroll-anchor');
+                        if (anchor) {
+                            anchor.scrollIntoView({ behavior: 'auto', block: 'end' });
+                        }
+                        var root = document.documentElement;
+                        var body = document.body;
                         var target = Math.max(
                             body ? body.scrollHeight : 0,
                             root ? root.scrollHeight : 0
                         );
-                        window.parent.scrollTo({ top: target, left: 0, behavior: 'auto' });
+                        window.scrollTo({ top: target, left: 0, behavior: 'auto' });
                         if (root) { root.scrollTop = target; }
                         if (body) { body.scrollTop = target; }
-                    } catch (e) {
-                        // iframe sandbox may block parent access; fail silently
-                    }
+                    } catch (e) {}
                 }
-                scrollParentToBottom();
-                // Retry after a short delay in case Streamlit is still rendering
-                setTimeout(scrollParentToBottom, 50);
-                setTimeout(scrollParentToBottom, 150);
+                scrollToBottom();
+                var attempts = 0;
+                var interval = setInterval(function () {
+                    scrollToBottom();
+                    attempts += 1;
+                    if (attempts >= 15) { clearInterval(interval); }
+                }, 100);
             })();
         </script>
-        """,
-        height=0,
-        width=0,
+        """
     )
 
 
