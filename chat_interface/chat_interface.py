@@ -145,9 +145,7 @@ def _inject_layout_css() -> None:
                 padding-bottom: 0.25rem !important;
             }
             .stChatFloatingInputContainer {
-                position: fixed !important;
-                bottom: 0 !important;
-                left: 0 !important;
+                position: static !important;
                 width: 100% !important;
                 padding: 0.5rem 1rem 0.75rem 1rem !important;
                 background: white !important;
