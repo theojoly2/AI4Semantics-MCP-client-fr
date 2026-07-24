@@ -145,12 +145,21 @@ def _inject_layout_css() -> None:
                 padding-bottom: 0.25rem !important;
             }
             .stChatFloatingInputContainer {
-                position: static !important;
+                position: fixed !important;
+                bottom: 0 !important;
+                left: 0 !important;
                 width: 100% !important;
                 padding: 0.5rem 1rem 0.75rem 1rem !important;
                 background: white !important;
                 border-top: 1px solid #e6e6e6;
                 z-index: 20 !important;
+            }
+            /* Prevent the fixed chat input from blocking the bottom of the page */
+            .main .block-container {
+                padding-bottom: 5rem !important;
+            }
+            div[data-testid="stChatInput"] {
+                scroll-margin-bottom: 5rem !important;
             }
             div[data-testid="stChatInput"] textarea,
             div[data-testid="stChatInput"] input {

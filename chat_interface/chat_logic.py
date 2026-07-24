@@ -44,38 +44,48 @@ if not logger.handlers:
 # ----------------------------------------------------------------------
 def _scroll_page_to_bottom() -> None:
     """Scroll the whole page to the bottom immediately after the user sends a message."""
-    st.html(
+    # Use a fixed-height iframe so the JS runs in its own execution context every time.
+    import streamlit.components.v1 as components
+
+    components.html(
         """
-        <div id="chat-scroll-anchor" style="height:1px;width:100%;"></div>
         <script>
             (function () {
-                function scrollToBottom() {
+                function scrollParentToBottom() {
                     try {
-                        var anchor = document.getElementById('chat-scroll-anchor');
+                        var doc = window.parent.document;
+                        var root = doc.documentElement;
+                        var body = doc.body;
+                        var target = Math.max(
+                            body ? body.scrollHeight : 0,
+                            root ? root.scrollHeight : 0,
+                            root ? root.offsetHeight : 0
+                        );
+                        // Compensate for the fixed chat input bar (~80px)
+                        var inputBar = doc.querySelector('.stChatFloatingInputContainer');
+                        var offset = inputBar ? inputBar.offsetHeight + 20 : 100;
+                        var finalTarget = Math.max(0, target - offset);
+                        window.parent.scrollTo({ top: finalTarget, left: 0, behavior: 'auto' });
+                        if (root) { root.scrollTop = finalTarget; }
+                        if (body) { body.scrollTop = finalTarget; }
+                        var anchor = doc.getElementById('chat-scroll-anchor');
                         if (anchor) {
                             anchor.scrollIntoView({ behavior: 'auto', block: 'end' });
                         }
-                        var root = document.documentElement;
-                        var body = document.body;
-                        var target = Math.max(
-                            body ? body.scrollHeight : 0,
-                            root ? root.scrollHeight : 0
-                        );
-                        window.scrollTo({ top: target, left: 0, behavior: 'auto' });
-                        if (root) { root.scrollTop = target; }
-                        if (body) { body.scrollTop = target; }
                     } catch (e) {}
                 }
-                scrollToBottom();
+                scrollParentToBottom();
                 var attempts = 0;
                 var interval = setInterval(function () {
-                    scrollToBottom();
+                    scrollParentToBottom();
                     attempts += 1;
-                    if (attempts >= 15) { clearInterval(interval); }
+                    if (attempts >= 20) { clearInterval(interval); }
                 }, 100);
             })();
         </script>
-        """
+        """,
+        height=0,
+        width=0,
     )
 
 
