@@ -99,17 +99,6 @@ def _inject_layout_css() -> None:
                 border-top: 1px solid #e6e6e6;
                 z-index: 100 !important;
             }
-            /* Full-width white backdrop behind the fixed input bar, above messages */
-            .chat-input-backdrop {
-                position: fixed !important;
-                bottom: 0 !important;
-                left: 0 !important;
-                width: 100% !important;
-                height: 5.5rem !important;
-                background: white !important;
-                z-index: 99 !important;
-                pointer-events: none !important;
-            }
             /* Prevent the fixed chat input from blocking the bottom of the page */
             .main .block-container {
                 padding-bottom: 5rem !important;
@@ -556,7 +545,6 @@ def data_modelling_chat_tab(server: str) -> None:
             st.session_state["_pending_input"] = user_input
             st.rerun()
 
-        st.markdown("<div class='chat-input-backdrop'></div>", unsafe_allow_html=True)
         st.markdown("<div class='chat-bottom-guard'></div>", unsafe_allow_html=True)
 
     except Exception as e:
