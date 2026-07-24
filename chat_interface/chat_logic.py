@@ -42,55 +42,6 @@ if not logger.handlers:
 # ----------------------------------------------------------------------
 # UI helpers
 # ----------------------------------------------------------------------
-def scroll_page_to_bottom() -> None:
-    """Scroll the whole page to the bottom immediately after the user sends a message."""
-    st.markdown(
-        """
-        <div id="chat-scroll-target" style="height:1px;width:100%;"></div>
-        <script>
-            (function () {
-                function scrollAllTheWayDown() {
-                    try {
-                        var selectors = [
-                            document.documentElement,
-                            document.body,
-                            document.querySelector('main'),
-                            document.querySelector('.stApp'),
-                            document.querySelector('.main'),
-                            document.querySelector('[data-testid="stAppViewContainer"]')
-                        ];
-                        var target = Math.max(
-                            document.documentElement.scrollHeight || 0,
-                            document.body.scrollHeight || 0,
-                            document.documentElement.offsetHeight || 0,
-                            document.body.offsetHeight || 0
-                        );
-                        window.scrollTo({ top: target, left: 0, behavior: 'auto' });
-                        for (var i = 0; i < selectors.length; i++) {
-                            var el = selectors[i];
-                            if (el && el.scrollHeight > el.clientHeight) {
-                                el.scrollTop = el.scrollHeight;
-                            }
-                        }
-                        var anchor = document.getElementById('chat-scroll-target');
-                        if (anchor) {
-                            anchor.scrollIntoView({ behavior: 'auto', block: 'end' });
-                        }
-                    } catch (e) {}
-                }
-                scrollAllTheWayDown();
-                setTimeout(scrollAllTheWayDown, 50);
-                setTimeout(scrollAllTheWayDown, 150);
-                setTimeout(scrollAllTheWayDown, 300);
-                setTimeout(scrollAllTheWayDown, 500);
-                setTimeout(scrollAllTheWayDown, 800);
-            })();
-        </script>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def show_user_error(title: str, details: Optional[str] = None) -> None:
     """
     Persist error info so it survives reruns, and show immediate UI feedback.
@@ -625,7 +576,6 @@ async def process_user_input(
         if not skip_user_echo:
             _append_live_event("user", user_input)
             _rerender_live()
-            scroll_page_to_bottom()
 
         history.start_new_request(user_input)
         history.add_user_message(user_input)

@@ -11,7 +11,7 @@ from streamlit.delta_generator import DeltaGenerator
 
 from clients import OpenAIClient, MCPClient
 from chat_history.chat_history import ChatHistory
-from .chat_logic import set_chatbox_layout, process_user_input, show_user_error, _render_tool_output, scroll_page_to_bottom
+from .chat_logic import set_chatbox_layout, process_user_input, show_user_error, _render_tool_output
 
 
 ANONYMOUS_USER = "anonymous"
@@ -45,61 +45,6 @@ async def with_timeout(coro, seconds: float = 45.0, on_timeout_msg: str = ""):
             details=on_timeout_msg or "The server took too long to respond.",
         )
         return None
-
-
-def _inject_scroll_js() -> None:
-    """Inject auto-scroll script directly into the chat panel so it runs after every render."""
-    st.markdown(
-        """
-        <script>
-            (function () {
-                window.__glossaryUserScrolledUp = window.__glossaryUserScrolledUp || false;
-                let userHasScrolledUp = window.__glossaryUserScrolledUp;
-
-                function isNearBottom() {
-                    const el = document.documentElement;
-                    return (el.scrollHeight - el.scrollTop - el.clientHeight) < 200;
-                }
-
-                function scrollToBottom() {
-                    if (userHasScrolledUp) return;
-                    const el = document.documentElement;
-                    const target = el.scrollHeight;
-                    if (el.scrollTop < target - 10) {
-                        window.scrollTo({ top: target, left: 0, behavior: 'auto' });
-                        el.scrollTop = target;
-                    }
-                }
-
-                function onWindowScroll() {
-                    const el = document.documentElement;
-                    // Detect intentional upward scroll (user wants to read old content)
-                    if (el.scrollTop < (window.__glossaryPrevScrollTop || 0) - 20) {
-                        userHasScrolledUp = true;
-                        window.__glossaryUserScrolledUp = true;
-                    } else if (isNearBottom()) {
-                        userHasScrolledUp = false;
-                        window.__glossaryUserScrolledUp = false;
-                    }
-                    window.__glossaryPrevScrollTop = el.scrollTop;
-                }
-
-                window.removeEventListener('scroll', onWindowScroll);
-                window.addEventListener('scroll', onWindowScroll, { passive: true });
-
-                // Run immediately so the page is at the bottom right after the user sends a message
-                scrollToBottom();
-
-                // Also hook DOM mutations in case page height changes during generation
-                const observer = new MutationObserver(function () {
-                    if (!userHasScrolledUp) scrollToBottom();
-                });
-                observer.observe(document.body, { childList: true, subtree: true });
-            })();
-        </script>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 def _inject_layout_css() -> None:
