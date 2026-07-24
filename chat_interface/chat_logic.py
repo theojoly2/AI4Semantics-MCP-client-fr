@@ -42,6 +42,22 @@ if not logger.handlers:
 # ----------------------------------------------------------------------
 # UI helpers
 # ----------------------------------------------------------------------
+def _scroll_page_to_bottom() -> None:
+    """Scroll the whole page to the bottom immediately after the user sends a message."""
+    st.markdown(
+        """
+        <script>
+            (function () {
+                const el = document.documentElement;
+                window.scrollTo({ top: el.scrollHeight, left: 0, behavior: 'auto' });
+                el.scrollTop = el.scrollHeight;
+            })();
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def show_user_error(title: str, details: Optional[str] = None) -> None:
     """
     Persist error info so it survives reruns, and show immediate UI feedback.
@@ -576,6 +592,7 @@ async def process_user_input(
         if not skip_user_echo:
             _append_live_event("user", user_input)
             _rerender_live()
+            _scroll_page_to_bottom()
 
         history.start_new_request(user_input)
         history.add_user_message(user_input)

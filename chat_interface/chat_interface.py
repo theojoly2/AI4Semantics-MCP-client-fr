@@ -87,19 +87,13 @@ def _inject_scroll_js() -> None:
                 window.removeEventListener('scroll', onWindowScroll);
                 window.addEventListener('scroll', onWindowScroll, { passive: true });
 
-                // Aggressive repeated scrolling: page grows during generation, so one scroll is not enough
-                function ensureBottom() {
-                    if (!userHasScrolledUp) {
-                        scrollToBottom();
-                    }
-                }
+                // Run immediately so the page is at the bottom right after the user sends a message
+                scrollToBottom();
 
-                // Run immediately and repeatedly
-                ensureBottom();
-                setInterval(ensureBottom, 100);
-
-                // Also hook DOM mutations in case page height changes
-                const observer = new MutationObserver(ensureBottom);
+                // Also hook DOM mutations in case page height changes during generation
+                const observer = new MutationObserver(function () {
+                    if (!userHasScrolledUp) scrollToBottom();
+                });
                 observer.observe(document.body, { childList: true, subtree: true });
             })();
         </script>
